@@ -1,0 +1,144 @@
+.scene-list {
+  width: 220px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+.scene-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.scene-list-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.add-scene-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  border-radius: 6px;
+  color: white;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.add-scene-btn:hover {
+  background: var(--accent-hover);
+}
+
+.scenes {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.scene-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  margin-bottom: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.scene-item:hover {
+  border-color: var(--border);
+}
+
+.scene-item.active {
+  border-color: var(--accent);
+  background: rgba(233, 69, 96, 0.1);
+}
+
+.scene-thumbnail {
+  width: 48px;
+  height: 32px;
+  background: var(--bg-primary);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.scene-number {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.scene-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.scene-name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scene-name-input {
+  font-size: 13px;
+  padding: 2px 6px;
+  width: 100%;
+}
+
+.scene-duration {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.scene-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.scene-item:hover .scene-actions {
+  opacity: 1;
+}
+
+.scene-action-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.scene-action-btn:hover {
+  color: var(--text-primary);
+  background: var(--border);
+}
+
+.scene-action-btn.delete:hover {
+  color: var(--accent);
+}
+

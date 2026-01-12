@@ -1,0 +1,72 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-icon {
+  font-size: 20px;
+  color: var(--accent);
+}
+
+.brand-text {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  background: var(--border);
+}
+
+.toolbar-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toolbar-btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-icon {
+  font-size: 14px;
+}
+
+.btn-label {
+  font-weight: 500;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  margin: 0 8px;
+}
+

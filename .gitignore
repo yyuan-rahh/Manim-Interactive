@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+release/
+
+# Runtime/bundled Manim (added later)
+runtime/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temporary files
+.tmp/
+temp/
+
+# Environment
+.env
+.env.local
+

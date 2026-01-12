@@ -3,6 +3,7 @@ import './Canvas.css'
 
 const SHAPE_PALETTE = [
   { type: 'rectangle', icon: '▭', label: 'Rectangle' },
+  { type: 'triangle', icon: '△', label: 'Triangle' },
   { type: 'circle', icon: '○', label: 'Circle' },
   { type: 'line', icon: '╱', label: 'Line' },
   { type: 'arrow', icon: '→', label: 'Arrow' },
@@ -18,6 +19,48 @@ const MANIM_HEIGHT = 8
 
 const HANDLE_SIZE = 10
 
+// Snapping constants
+const SNAP_THRESHOLD = 0.15 // Manim units - how close before snapping
+const GRID_SNAP = 0.5 // Snap to half-unit grid
+const ANGLE_SNAP = 45 // Degrees for angle snapping
+
+// Snap a value to the nearest grid point
+const snapToGrid = (value, gridSize = GRID_SNAP) => {
+  return Math.round(value / gridSize) * gridSize
+}
+
+// Snap angle to nearest 45 degrees
+const snapAngle = (angle) => {
+  const snapped = Math.round(angle / ANGLE_SNAP) * ANGLE_SNAP
+  return snapped
+}
+
+// Snap a point to horizontal/vertical/45° alignment relative to another point
+const snapToAngleFromPoint = (x, y, refX, refY) => {
+  const dx = x - refX
+  const dy = y - refY
+  const dist = Math.sqrt(dx * dx + dy * dy)
+  
+  if (dist < 0.01) return { x, y }
+  
+  // Calculate angle in degrees
+  const angle = Math.atan2(dy, dx) * 180 / Math.PI
+  
+  // Snap to nearest 45 degrees
+  const snappedAngle = snapAngle(angle)
+  const snappedRad = snappedAngle * Math.PI / 180
+  
+  // Check if we're close enough to snap
+  if (Math.abs(angle - snappedAngle) < 8) { // Within 8 degrees
+    return {
+      x: refX + Math.cos(snappedRad) * dist,
+      y: refY + Math.sin(snappedRad) * dist
+    }
+  }
+  
+  return { x, y }
+}
+
 function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAddObject }) {
   const canvasRef = useRef(null)
   const containerRef = useRef(null)
@@ -27,6 +70,7 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
   const [activeHandle, setActiveHandle] = useState(null) // which handle is being dragged
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const [snapEnabled, setSnapEnabled] = useState(true)
 
   // Convert Manim coords to canvas coords
   const manimToCanvas = useCallback((mx, my) => {
@@ -113,6 +157,7 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
         drawObject(ctx, obj, obj.id === selectedObjectId)
       })
     }
+    
   }, [scene, selectedObjectId, canvasSize, manimToCanvas])
 
   const drawObject = (ctx, obj, isSelected) => {
@@ -184,6 +229,32 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
         ctx.fill()
         break
       }
+      case 'triangle': {
+        // Triangle with 3 vertices (relative to center)
+        const verts = obj.vertices || [
+          { x: 0, y: 1 },
+          { x: -0.866, y: -0.5 },
+          { x: 0.866, y: -0.5 }
+        ]
+        ctx.beginPath()
+        verts.forEach((v, i) => {
+          const px = v.x * scaleX
+          const py = -v.y * scaleY // Flip Y for canvas
+          if (i === 0) ctx.moveTo(px, py)
+          else ctx.lineTo(px, py)
+        })
+        ctx.closePath()
+        if (obj.fill) {
+          ctx.fillStyle = obj.fill
+          ctx.fill()
+        }
+        if (obj.stroke) {
+          ctx.strokeStyle = obj.stroke
+          ctx.lineWidth = obj.strokeWidth || 2
+          ctx.stroke()
+        }
+        break
+      }
       case 'polygon': {
         const r = obj.radius * scaleX
         const sides = obj.sides || 5
@@ -247,24 +318,49 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
       ctx.strokeRect(topLeft.x - 4, topLeft.y - 4, size.width + 8, size.height + 8)
       ctx.setLineDash([])
       
-      // Draw resize handles
-      ctx.fillStyle = '#e94560'
-      const handles = getHandles(obj, topLeft, size)
-      handles.forEach(handle => {
-        ctx.fillRect(handle.x - HANDLE_SIZE/2, handle.y - HANDLE_SIZE/2, HANDLE_SIZE, HANDLE_SIZE)
-      })
-      
-      // For lines/arrows, draw endpoint handles
-      if (obj.type === 'line' || obj.type === 'arrow') {
+      // Draw vertex handles for shapes with vertices
+      if (obj.type === 'triangle') {
+        ctx.fillStyle = '#4ade80'
+        const verts = obj.vertices || []
+        verts.forEach((v, i) => {
+          const vPos = manimToCanvas(obj.x + v.x, obj.y + v.y)
+          ctx.beginPath()
+          ctx.arc(vPos.x, vPos.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
+          ctx.fill()
+        })
+      } else if (obj.type === 'rectangle') {
+        // Draw corner handles at actual corners
+        ctx.fillStyle = '#4ade80'
+        const corners = [
+          { x: obj.x - obj.width/2, y: obj.y + obj.height/2 }, // NW
+          { x: obj.x + obj.width/2, y: obj.y + obj.height/2 }, // NE
+          { x: obj.x - obj.width/2, y: obj.y - obj.height/2 }, // SW
+          { x: obj.x + obj.width/2, y: obj.y - obj.height/2 }, // SE
+        ]
+        corners.forEach(c => {
+          const cPos = manimToCanvas(c.x, c.y)
+          ctx.beginPath()
+          ctx.arc(cPos.x, cPos.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
+          ctx.fill()
+        })
+      } else if (obj.type === 'line' || obj.type === 'arrow') {
+        // Draw endpoint handles
         const start = manimToCanvas(obj.x, obj.y)
         const end = manimToCanvas(obj.x2, obj.y2)
         ctx.fillStyle = '#4ade80'
         ctx.beginPath()
-        ctx.arc(start.x, start.y, HANDLE_SIZE/2, 0, Math.PI * 2)
+        ctx.arc(start.x, start.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
         ctx.fill()
         ctx.beginPath()
-        ctx.arc(end.x, end.y, HANDLE_SIZE/2, 0, Math.PI * 2)
+        ctx.arc(end.x, end.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
         ctx.fill()
+      } else {
+        // Draw corner resize handles for other shapes
+        ctx.fillStyle = '#e94560'
+        const handles = getHandles(obj, topLeft, size)
+        handles.forEach(handle => {
+          ctx.fillRect(handle.x - HANDLE_SIZE/2, handle.y - HANDLE_SIZE/2, HANDLE_SIZE, HANDLE_SIZE)
+        })
       }
       
       ctx.restore()
@@ -273,8 +369,8 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
   
   // Get resize handles for an object
   const getHandles = (obj, topLeft, size) => {
-    if (obj.type === 'line' || obj.type === 'arrow') {
-      return [] // Lines use endpoint handles instead
+    if (obj.type === 'line' || obj.type === 'arrow' || obj.type === 'triangle' || obj.type === 'rectangle') {
+      return [] // These use vertex handles instead
     }
     
     return [
@@ -294,6 +390,17 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
           minY: obj.y - obj.height / 2,
           maxY: obj.y + obj.height / 2
         }
+      case 'triangle': {
+        const verts = obj.vertices || [{ x: 0, y: 1 }, { x: -0.866, y: -0.5 }, { x: 0.866, y: -0.5 }]
+        const xs = verts.map(v => obj.x + v.x)
+        const ys = verts.map(v => obj.y + v.y)
+        return {
+          minX: Math.min(...xs),
+          maxX: Math.max(...xs),
+          minY: Math.min(...ys),
+          maxY: Math.max(...ys)
+        }
+      }
       case 'circle':
       case 'dot':
         return {
@@ -348,21 +455,50 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
     const bottomRight = manimToCanvas(bounds.maxX, bounds.minY)
     const size = { width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y }
     
+    // For triangles, check vertex handles
+    if (obj.type === 'triangle') {
+      const verts = obj.vertices || []
+      for (let i = 0; i < verts.length; i++) {
+        const vPos = manimToCanvas(obj.x + verts[i].x, obj.y + verts[i].y)
+        if (Math.hypot(canvasX - vPos.x, canvasY - vPos.y) < HANDLE_SIZE + 4) {
+          return `vertex-${i}`
+        }
+      }
+      return null
+    }
+    
+    // For rectangles, check corner vertex handles
+    if (obj.type === 'rectangle') {
+      const corners = [
+        { id: 'corner-0', x: obj.x - obj.width/2, y: obj.y + obj.height/2 }, // NW
+        { id: 'corner-1', x: obj.x + obj.width/2, y: obj.y + obj.height/2 }, // NE
+        { id: 'corner-2', x: obj.x - obj.width/2, y: obj.y - obj.height/2 }, // SW
+        { id: 'corner-3', x: obj.x + obj.width/2, y: obj.y - obj.height/2 }, // SE
+      ]
+      for (const corner of corners) {
+        const cPos = manimToCanvas(corner.x, corner.y)
+        if (Math.hypot(canvasX - cPos.x, canvasY - cPos.y) < HANDLE_SIZE + 4) {
+          return corner.id
+        }
+      }
+      return null
+    }
+    
     // For lines/arrows, check endpoint handles
     if (obj.type === 'line' || obj.type === 'arrow') {
       const start = manimToCanvas(obj.x, obj.y)
       const end = manimToCanvas(obj.x2, obj.y2)
       
-      if (Math.hypot(canvasX - start.x, canvasY - start.y) < HANDLE_SIZE) {
+      if (Math.hypot(canvasX - start.x, canvasY - start.y) < HANDLE_SIZE + 4) {
         return 'start'
       }
-      if (Math.hypot(canvasX - end.x, canvasY - end.y) < HANDLE_SIZE) {
+      if (Math.hypot(canvasX - end.x, canvasY - end.y) < HANDLE_SIZE + 4) {
         return 'end'
       }
       return null
     }
     
-    // Check corner handles
+    // Check corner handles for other shapes
     const handles = getHandles(obj, topLeft, size)
     for (const handle of handles) {
       if (Math.abs(canvasX - handle.x) < HANDLE_SIZE && Math.abs(canvasY - handle.y) < HANDLE_SIZE) {
@@ -372,6 +508,44 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
     
     return null
   }
+
+  // Simplified snap - just grid and axes
+  const snapPosition = useCallback((x, y, excludeId = null) => {
+    // If snapping is disabled, just return rounded values
+    if (!snapEnabled) {
+      return { 
+        x: parseFloat(x.toFixed(2)), 
+        y: parseFloat(y.toFixed(2)) 
+      }
+    }
+    
+    let snappedX = x
+    let snappedY = y
+    
+    // Snap to grid (0.5 units)
+    const gridX = snapToGrid(x)
+    const gridY = snapToGrid(y)
+    
+    if (Math.abs(x - gridX) < SNAP_THRESHOLD) {
+      snappedX = gridX
+    }
+    if (Math.abs(y - gridY) < SNAP_THRESHOLD) {
+      snappedY = gridY
+    }
+    
+    // Snap to origin axes (strongest snap)
+    if (Math.abs(snappedX) < SNAP_THRESHOLD * 1.5) {
+      snappedX = 0
+    }
+    if (Math.abs(snappedY) < SNAP_THRESHOLD * 1.5) {
+      snappedY = 0
+    }
+    
+    return { 
+      x: parseFloat(snappedX.toFixed(2)), 
+      y: parseFloat(snappedY.toFixed(2)) 
+    }
+  }, [snapEnabled])
 
   const handleMouseDown = (e) => {
     const rect = canvasRef.current.getBoundingClientRect()
@@ -415,52 +589,73 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
     const dx = (e.clientX - dragStart.x) / scaleX
     const dy = -(e.clientY - dragStart.y) / scaleY
     
+    // Check if shift is held for angle snapping
+    const shiftHeld = e.shiftKey
+    
     if (dragType === 'move') {
-      onUpdateObject(selectedObjectId, {
-        x: parseFloat((dragOffset.x + dx).toFixed(2)),
-        y: parseFloat((dragOffset.y + dy).toFixed(2))
-      })
+      const rawX = dragOffset.x + dx
+      const rawY = dragOffset.y + dy
+      const snapped = snapPosition(rawX, rawY, selectedObjectId)
+      onUpdateObject(selectedObjectId, snapped)
     } else if (dragType === 'resize') {
       const obj = scene.objects.find(o => o.id === selectedObjectId)
       if (!obj) return
       
-      // Handle line/arrow endpoint dragging
-      if (obj.type === 'line' || obj.type === 'arrow') {
-        if (activeHandle === 'start') {
-          onUpdateObject(selectedObjectId, {
-            x: parseFloat((dragOffset.x + dx).toFixed(2)),
-            y: parseFloat((dragOffset.y + dy).toFixed(2))
-          })
-        } else if (activeHandle === 'end') {
-          onUpdateObject(selectedObjectId, {
-            x2: parseFloat((dragOffset.x2 + dx).toFixed(2)),
-            y2: parseFloat((dragOffset.y2 + dy).toFixed(2))
-          })
+      // Handle triangle vertex dragging
+      if (obj.type === 'triangle' && activeHandle?.startsWith('vertex-')) {
+        const vertexIndex = parseInt(activeHandle.split('-')[1])
+        const verts = [...(dragOffset.vertices || [])]
+        if (verts[vertexIndex]) {
+          let newVX = verts[vertexIndex].x + dx
+          let newVY = verts[vertexIndex].y + dy
+          
+          // Snap to angle from center if shift held
+          if (shiftHeld) {
+            const snappedPos = snapToAngleFromPoint(newVX, newVY, 0, 0)
+            newVX = snappedPos.x
+            newVY = snappedPos.y
+          }
+          
+          verts[vertexIndex] = {
+            x: parseFloat(newVX.toFixed(2)),
+            y: parseFloat(newVY.toFixed(2))
+          }
+          onUpdateObject(selectedObjectId, { vertices: verts })
+          setDragStart({ x: e.clientX, y: e.clientY })
+          setDragOffset({ ...dragOffset, vertices: verts })
         }
         return
       }
       
-      // Handle corner resizing for shapes
-      if (obj.type === 'rectangle') {
-        let newWidth = dragOffset.width
-        let newHeight = dragOffset.height
+      // Handle rectangle corner dragging
+      if (obj.type === 'rectangle' && activeHandle?.startsWith('corner-')) {
+        const cornerIndex = parseInt(activeHandle.split('-')[1])
+        // Corners: 0=NW, 1=NE, 2=SW, 3=SE
         let newX = dragOffset.x
         let newY = dragOffset.y
+        let newWidth = dragOffset.width
+        let newHeight = dragOffset.height
         
-        if (activeHandle.includes('e')) {
-          newWidth = Math.max(0.2, dragOffset.width + dx)
-          newX = dragOffset.x + dx / 2
-        }
-        if (activeHandle.includes('w')) {
+        // Calculate new dimensions based on which corner is being dragged
+        if (cornerIndex === 0) { // NW
           newWidth = Math.max(0.2, dragOffset.width - dx)
-          newX = dragOffset.x + dx / 2
-        }
-        if (activeHandle.includes('s')) {
-          newHeight = Math.max(0.2, dragOffset.height - dy)
-          newY = dragOffset.y + dy / 2
-        }
-        if (activeHandle.includes('n')) {
           newHeight = Math.max(0.2, dragOffset.height + dy)
+          newX = dragOffset.x + dx / 2
+          newY = dragOffset.y + dy / 2
+        } else if (cornerIndex === 1) { // NE
+          newWidth = Math.max(0.2, dragOffset.width + dx)
+          newHeight = Math.max(0.2, dragOffset.height + dy)
+          newX = dragOffset.x + dx / 2
+          newY = dragOffset.y + dy / 2
+        } else if (cornerIndex === 2) { // SW
+          newWidth = Math.max(0.2, dragOffset.width - dx)
+          newHeight = Math.max(0.2, dragOffset.height - dy)
+          newX = dragOffset.x + dx / 2
+          newY = dragOffset.y + dy / 2
+        } else if (cornerIndex === 3) { // SE
+          newWidth = Math.max(0.2, dragOffset.width + dx)
+          newHeight = Math.max(0.2, dragOffset.height - dy)
+          newX = dragOffset.x + dx / 2
           newY = dragOffset.y + dy / 2
         }
         
@@ -470,14 +665,55 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
           x: parseFloat(newX.toFixed(2)),
           y: parseFloat(newY.toFixed(2))
         })
-      } else if (obj.type === 'circle' || obj.type === 'polygon' || obj.type === 'dot') {
-        // For circles/polygons, resize radius based on distance from center
+        return
+      }
+      
+      // Handle line/arrow endpoint dragging
+      if (obj.type === 'line' || obj.type === 'arrow') {
+        if (activeHandle === 'start') {
+          let newX = dragOffset.x + dx
+          let newY = dragOffset.y + dy
+          
+          // Snap to angle from end point if shift or close to 45° angles
+          if (shiftHeld) {
+            const snappedAngle = snapToAngleFromPoint(newX, newY, obj.x2, obj.y2)
+            newX = snappedAngle.x
+            newY = snappedAngle.y
+          }
+          
+          const snapped = snapPosition(newX, newY, selectedObjectId)
+          onUpdateObject(selectedObjectId, snapped)
+        } else if (activeHandle === 'end') {
+          let newX2 = dragOffset.x2 + dx
+          let newY2 = dragOffset.y2 + dy
+          
+          // Snap to angle from start point if shift or close to 45° angles
+          if (shiftHeld) {
+            const snappedAngle = snapToAngleFromPoint(newX2, newY2, obj.x, obj.y)
+            newX2 = snappedAngle.x
+            newY2 = snappedAngle.y
+          }
+          
+          const snapped = snapPosition(newX2, newY2, selectedObjectId)
+          onUpdateObject(selectedObjectId, {
+            x2: snapped.x,
+            y2: snapped.y
+          })
+        }
+        return
+      }
+      
+      // For circles/polygons, resize radius based on distance from center
+      if (obj.type === 'circle' || obj.type === 'polygon' || obj.type === 'dot') {
         const dist = Math.sqrt(dx * dx + dy * dy)
-        const sign = (activeHandle.includes('e') || activeHandle.includes('s')) ? 1 : -1
+        const sign = (activeHandle?.includes('e') || activeHandle?.includes('s')) ? 1 : -1
         const newRadius = Math.max(0.1, dragOffset.radius + sign * dist * 0.5)
         
+        // Snap radius to grid
+        const snappedRadius = snapToGrid(newRadius, 0.25)
+        
         onUpdateObject(selectedObjectId, {
-          radius: parseFloat(newRadius.toFixed(2))
+          radius: parseFloat(snappedRadius.toFixed(2))
         })
       }
     }
@@ -507,6 +743,17 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
             <span className="palette-label">{shape.label}</span>
           </button>
         ))}
+        
+        <div className="palette-divider" />
+        
+        <button
+          className={`palette-item snap-toggle ${snapEnabled ? 'active' : ''}`}
+          onClick={() => setSnapEnabled(!snapEnabled)}
+          title={snapEnabled ? 'Snapping ON (click to disable)' : 'Snapping OFF (click to enable)'}
+        >
+          <span className="palette-icon">⊞</span>
+          <span className="palette-label">{snapEnabled ? 'Snap ON' : 'Snap OFF'}</span>
+        </button>
       </div>
       
       <div className="canvas-wrapper">

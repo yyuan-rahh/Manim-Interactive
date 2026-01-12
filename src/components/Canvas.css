@@ -50,6 +50,27 @@
   padding: 20px;
 }
 
+.palette-divider {
+  width: 1px;
+  height: 40px;
+  background: var(--border);
+  margin: 0 8px;
+  align-self: center;
+}
+
+.snap-toggle {
+  background: var(--bg-primary) !important;
+}
+
+.snap-toggle.active {
+  background: rgba(74, 222, 128, 0.2) !important;
+  border-color: #4ade80 !important;
+}
+
+.snap-toggle.active .palette-icon {
+  color: #4ade80;
+}
+
 .canvas-wrapper canvas {
   background: #1a1a2e;
   border-radius: 8px;

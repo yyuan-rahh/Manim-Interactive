@@ -129,6 +129,14 @@ function generateObjectCreation(obj, varName) {
       return `${varName} = Dot(point=${pos}, radius=${obj.radius}, color=${fill})`
     }
     
+    case 'triangle': {
+      const fill = obj.fill ? colorToManim(obj.fill) : 'None'
+      const stroke = obj.stroke ? colorToManim(obj.stroke) : 'WHITE'
+      const verts = obj.vertices || [{ x: 0, y: 1 }, { x: -0.866, y: -0.5 }, { x: 0.866, y: -0.5 }]
+      const points = verts.map(v => `[${(obj.x + v.x).toFixed(2)}, ${(obj.y + v.y).toFixed(2)}, 0]`).join(', ')
+      return `${varName} = Polygon(${points}, fill_color=${fill}, fill_opacity=${obj.fill ? obj.opacity : 0}, stroke_color=${stroke}, stroke_width=${obj.strokeWidth || 2})`
+    }
+    
     case 'polygon': {
       const fill = obj.fill ? colorToManim(obj.fill) : 'None'
       const stroke = obj.stroke ? colorToManim(obj.stroke) : 'WHITE'
@@ -258,6 +266,7 @@ function getDefaultAnimation(type) {
     case 'arrow':
       return 'Create'
     case 'polygon':
+    case 'triangle':
       return 'DrawBorderThenFill'
     default:
       return 'Create'

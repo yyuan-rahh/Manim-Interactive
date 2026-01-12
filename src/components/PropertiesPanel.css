@@ -157,3 +157,27 @@
   min-width: 30px;
 }
 
+.layer-controls {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.layer-btn {
+  flex: 1;
+  padding: 8px 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.layer-btn:hover {
+  background: var(--bg-primary);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+

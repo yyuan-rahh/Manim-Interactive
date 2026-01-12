@@ -41,7 +41,15 @@ function NumberInput({ value, onChange, step = 0.1, min, max, ...props }) {
   )
 }
 
-function PropertiesPanel({ object, onUpdateObject, onDeleteObject }) {
+function PropertiesPanel({ 
+  object, 
+  onUpdateObject, 
+  onDeleteObject,
+  onBringForward,
+  onSendBackward,
+  onBringToFront,
+  onSendToBack
+}) {
   if (!object) {
     return (
       <div className="properties-panel">
@@ -80,6 +88,38 @@ function PropertiesPanel({ object, onUpdateObject, onDeleteObject }) {
         <div className="property-group">
           <label className="property-label">Type</label>
           <div className="property-value type-badge">{object.type}</div>
+        </div>
+        
+        <div className="property-section-title">Layer Order</div>
+        <div className="layer-controls">
+          <button 
+            className="layer-btn" 
+            onClick={() => onBringToFront(object.id)}
+            title="Bring to Front"
+          >
+            ⬆⬆
+          </button>
+          <button 
+            className="layer-btn" 
+            onClick={() => onBringForward(object.id)}
+            title="Bring Forward"
+          >
+            ⬆
+          </button>
+          <button 
+            className="layer-btn" 
+            onClick={() => onSendBackward(object.id)}
+            title="Send Backward"
+          >
+            ⬇
+          </button>
+          <button 
+            className="layer-btn" 
+            onClick={() => onSendToBack(object.id)}
+            title="Send to Back"
+          >
+            ⬇⬇
+          </button>
         </div>
         
         {object.type === 'rectangle' && (

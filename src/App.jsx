@@ -139,6 +139,77 @@ function App() {
     }
   }, [activeSceneId, selectedObjectId])
 
+  // Layer ordering functions
+  const bringForward = useCallback((objectId) => {
+    setProject(prev => ({
+      ...prev,
+      scenes: prev.scenes.map(s => {
+        if (s.id !== activeSceneId) return s
+        const obj = s.objects.find(o => o.id === objectId)
+        if (!obj) return s
+        const maxZ = Math.max(...s.objects.map(o => o.zIndex || 0))
+        if ((obj.zIndex || 0) >= maxZ) return s
+        return {
+          ...s,
+          objects: s.objects.map(o => 
+            o.id === objectId ? { ...o, zIndex: (o.zIndex || 0) + 1 } : o
+          )
+        }
+      })
+    }))
+  }, [activeSceneId])
+
+  const sendBackward = useCallback((objectId) => {
+    setProject(prev => ({
+      ...prev,
+      scenes: prev.scenes.map(s => {
+        if (s.id !== activeSceneId) return s
+        const obj = s.objects.find(o => o.id === objectId)
+        if (!obj) return s
+        const minZ = Math.min(...s.objects.map(o => o.zIndex || 0))
+        if ((obj.zIndex || 0) <= minZ) return s
+        return {
+          ...s,
+          objects: s.objects.map(o => 
+            o.id === objectId ? { ...o, zIndex: (o.zIndex || 0) - 1 } : o
+          )
+        }
+      })
+    }))
+  }, [activeSceneId])
+
+  const bringToFront = useCallback((objectId) => {
+    setProject(prev => ({
+      ...prev,
+      scenes: prev.scenes.map(s => {
+        if (s.id !== activeSceneId) return s
+        const maxZ = Math.max(...s.objects.map(o => o.zIndex || 0))
+        return {
+          ...s,
+          objects: s.objects.map(o => 
+            o.id === objectId ? { ...o, zIndex: maxZ + 1 } : o
+          )
+        }
+      })
+    }))
+  }, [activeSceneId])
+
+  const sendToBack = useCallback((objectId) => {
+    setProject(prev => ({
+      ...prev,
+      scenes: prev.scenes.map(s => {
+        if (s.id !== activeSceneId) return s
+        const minZ = Math.min(...s.objects.map(o => o.zIndex || 0))
+        return {
+          ...s,
+          objects: s.objects.map(o => 
+            o.id === objectId ? { ...o, zIndex: minZ - 1 } : o
+          )
+        }
+      })
+    }))
+  }, [activeSceneId])
+
   // Timeline / keyframe management
   const addKeyframe = useCallback((objectId, time, property, value) => {
     setProject(prev => ({
@@ -255,6 +326,10 @@ function App() {
             object={selectedObject}
             onUpdateObject={updateObject}
             onDeleteObject={deleteObject}
+            onBringForward={bringForward}
+            onSendBackward={sendBackward}
+            onBringToFront={bringToFront}
+            onSendToBack={sendToBack}
           />
           
           <CodePanel
@@ -292,6 +367,18 @@ function createObject(type) {
   switch (type) {
     case 'rectangle':
       return { ...baseObject, width: 2, height: 1, fill: '#e94560', stroke: '#ffffff', strokeWidth: 2 }
+    case 'triangle':
+      return { 
+        ...baseObject, 
+        vertices: [
+          { x: 0, y: 1 },
+          { x: -0.866, y: -0.5 },
+          { x: 0.866, y: -0.5 }
+        ],
+        fill: '#f59e0b', 
+        stroke: '#ffffff', 
+        strokeWidth: 2 
+      }
     case 'circle':
       return { ...baseObject, radius: 1, fill: '#4ade80', stroke: '#ffffff', strokeWidth: 2 }
     case 'line':

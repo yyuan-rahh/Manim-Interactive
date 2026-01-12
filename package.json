@@ -21,6 +21,7 @@
     "wait-on": "^7.2.0"
   },
   "dependencies": {
+    "expr-eval": "^2.0.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "uuid": "^9.0.1"
@@ -30,7 +31,10 @@
     "productName": "ManimInteractive",
     "mac": {
       "category": "public.app-category.education",
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
     "files": [
       "dist/**/*",
@@ -42,4 +46,3 @@
     }
   }
 }
-

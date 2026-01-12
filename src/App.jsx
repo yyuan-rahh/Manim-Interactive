@@ -15,6 +15,7 @@ function App() {
   const [activeSceneId, setActiveSceneId] = useState(project.scenes[0]?.id)
   const [selectedObjectId, setSelectedObjectId] = useState(null)
   const [generatedCode, setGeneratedCode] = useState('')
+  const [customCode, setCustomCode] = useState('')
   const [renderLogs, setRenderLogs] = useState('')
   const [isRendering, setIsRendering] = useState(false)
   const [videoData, setVideoData] = useState(null)
@@ -27,7 +28,11 @@ function App() {
   useEffect(() => {
     const code = generateManimCode(project, activeSceneId)
     setGeneratedCode(code)
-  }, [project, activeSceneId])
+    // Only reset custom code if it hasn't been edited
+    if (!customCode) {
+      setCustomCode(code)
+    }
+  }, [project, activeSceneId, customCode])
 
   // Listen for render logs
   useEffect(() => {
@@ -94,10 +99,10 @@ function App() {
   }, [project.scenes])
 
   // Object management
-  const addObject = useCallback((objectType) => {
+  const addObject = useCallback((objectType, overrides = {}) => {
     if (!activeScene) return
     
-    const newObject = createObject(objectType)
+    const newObject = { ...createObject(objectType), ...overrides }
     setProject(prev => ({
       ...prev,
       scenes: prev.scenes.map(s => 
@@ -265,8 +270,9 @@ function App() {
     setVideoData(null)
     
     const sceneName = activeScene.name.replace(/[^a-zA-Z0-9]/g, '_')
+    const codeToRender = customCode || generatedCode
     const result = await window.electronAPI.renderManim({
-      pythonCode: generatedCode,
+      pythonCode: codeToRender,
       sceneName,
       quality: 'low'
     })
@@ -282,7 +288,7 @@ function App() {
     }
     
     setIsRendering(false)
-  }, [activeScene, generatedCode])
+  }, [activeScene, generatedCode, customCode])
 
   return (
     <div className="app">
@@ -318,6 +324,8 @@ function App() {
             scene={activeScene}
             selectedObjectId={selectedObjectId}
             onAddKeyframe={addKeyframe}
+            onSelectObject={setSelectedObjectId}
+            onUpdateObject={updateObject}
           />
         </div>
         
@@ -330,11 +338,13 @@ function App() {
             onSendBackward={sendBackward}
             onBringToFront={bringToFront}
             onSendToBack={sendToBack}
+            scene={activeScene}
           />
           
           <CodePanel
-            code={generatedCode}
+            code={customCode || generatedCode}
             logs={renderLogs}
+            onCodeChange={setCustomCode}
           />
         </div>
       </div>
@@ -361,7 +371,8 @@ function createObject(type) {
     zIndex: 0,
     keyframes: [],
     runTime: 1,
-    delay: 0
+    delay: 0,
+    animationType: 'auto'
   }
   
   switch (type) {
@@ -393,6 +404,55 @@ function createObject(type) {
       return { ...baseObject, latex: '\\frac{a}{b}', fill: '#ffffff' }
     case 'polygon':
       return { ...baseObject, sides: 5, radius: 1, fill: '#8b5cf6', stroke: '#ffffff', strokeWidth: 2 }
+    case 'function':
+      return { 
+        ...baseObject, 
+        formula: 'x^2',
+        domain: { min: -5, max: 5 },
+        color: '#60a5fa',
+        strokeWidth: 2,
+        showDerivative: false,
+        showSecondDerivative: false
+      }
+    case 'tangent':
+      return {
+        ...baseObject,
+        functionId: null,
+        pointX: 0,
+        length: 2,
+        color: '#f59e0b',
+        strokeWidth: 2
+      }
+    case 'riemann_sum':
+      return {
+        ...baseObject,
+        functionId: null,
+        interval: { a: 0, b: 2 },
+        n: 4,
+        method: 'left',
+        fillColor: '#8b5cf6',
+        strokeColor: '#ffffff',
+        strokeWidth: 1
+      }
+    case 'accumulation':
+      return {
+        ...baseObject,
+        functionId: null,
+        startPoint: 0,
+        currentX: 2,
+        fillColor: '#60a5fa',
+        opacity: 0.5
+      }
+    case 'taylor_series':
+      return {
+        ...baseObject,
+        functionId: null,
+        center: 0,
+        degree: 3,
+        showError: false,
+        color: '#f59e0b',
+        strokeWidth: 2
+      }
     default:
       return baseObject
   }

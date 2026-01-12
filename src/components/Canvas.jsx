@@ -1,5 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react'
 import './Canvas.css'
+import { mathParser } from '../utils/mathParser'
+import { calculateRiemannSum, integrate, taylorCoefficients } from '../utils/calculus'
 
 const SHAPE_PALETTE = [
   { type: 'rectangle', icon: '▭', label: 'Rectangle' },
@@ -11,6 +13,18 @@ const SHAPE_PALETTE = [
   { type: 'polygon', icon: '⬠', label: 'Polygon' },
   { type: 'text', icon: 'T', label: 'Text' },
   { type: 'latex', icon: '∑', label: 'LaTeX' },
+  { type: 'function', icon: 'ƒ', label: 'Function' },
+  { type: 'tangent', icon: '↗', label: 'Tangent' },
+  { type: 'riemann_sum', icon: '▭', label: 'Riemann Sum' },
+  { type: 'accumulation', icon: '∫', label: 'FTC' },
+  { type: 'taylor_series', icon: 'Σ', label: 'Taylor Series' },
+]
+
+const RIEMANN_OPTIONS = [
+  { label: 'Left Rectangles', method: 'left', n: 8 },
+  { label: 'Right Rectangles', method: 'right', n: 8 },
+  { label: 'Midpoint Rectangles', method: 'midpoint', n: 8 },
+  { label: 'Trapezoid Rule', method: 'trapezoid', n: 8 },
 ]
 
 // Manim coordinate system: center is (0,0), x: -7 to 7, y: -4 to 4
@@ -64,6 +78,7 @@ const snapToAngleFromPoint = (x, y, refX, refY) => {
 function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAddObject }) {
   const canvasRef = useRef(null)
   const containerRef = useRef(null)
+  const dropdownRef = useRef(null)
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 450 })
   const [isDragging, setIsDragging] = useState(false)
   const [dragType, setDragType] = useState(null) // 'move' | 'resize-corner' | 'resize-edge' | 'endpoint'
@@ -71,6 +86,7 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const [snapEnabled, setSnapEnabled] = useState(true)
+  const [openPaletteMenu, setOpenPaletteMenu] = useState(null)
 
   // Convert Manim coords to canvas coords
   const manimToCanvas = useCallback((mx, my) => {
@@ -109,6 +125,16 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
     window.addEventListener('resize', updateSize)
     return () => window.removeEventListener('resize', updateSize)
   }, [])
+
+  useEffect(() => {
+    if (!openPaletteMenu) return
+    const handleClick = (event) => {
+      if (dropdownRef.current?.contains(event.target)) return
+      setOpenPaletteMenu(null)
+    }
+    window.addEventListener('click', handleClick)
+    return () => window.removeEventListener('click', handleClick)
+  }, [openPaletteMenu])
 
   // Draw the scene
   useEffect(() => {
@@ -154,27 +180,28 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
     if (scene?.objects) {
       const sortedObjects = [...scene.objects].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0))
       sortedObjects.forEach(obj => {
-        drawObject(ctx, obj, obj.id === selectedObjectId)
+        drawObject(ctx, obj, obj.id === selectedObjectId, scene)
       })
     }
     
   }, [scene, selectedObjectId, canvasSize, manimToCanvas])
 
-  const drawObject = (ctx, obj, isSelected) => {
+  const drawObject = (ctx, obj, isSelected, scene) => {
     const pos = manimToCanvas(obj.x, obj.y)
     
     ctx.save()
     ctx.translate(pos.x, pos.y)
     ctx.rotate(-obj.rotation * Math.PI / 180) // Negative because canvas Y is inverted
-    ctx.globalAlpha = obj.opacity ?? 1
     
     switch (obj.type) {
       case 'rectangle': {
         const w = obj.width * scaleX
         const h = obj.height * scaleY
         if (obj.fill) {
+          ctx.globalAlpha = obj.opacity ?? 1
           ctx.fillStyle = obj.fill
           ctx.fillRect(-w / 2, -h / 2, w, h)
+          ctx.globalAlpha = 1
         }
         if (obj.stroke) {
           ctx.strokeStyle = obj.stroke
@@ -188,8 +215,10 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
         ctx.beginPath()
         ctx.arc(0, 0, r, 0, Math.PI * 2)
         if (obj.fill) {
+          ctx.globalAlpha = obj.opacity ?? 1
           ctx.fillStyle = obj.fill
           ctx.fill()
+          ctx.globalAlpha = 1
         }
         if (obj.stroke) {
           ctx.strokeStyle = obj.stroke
@@ -225,8 +254,10 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
         const r = Math.max(obj.radius * scaleX, 5)
         ctx.beginPath()
         ctx.arc(0, 0, r, 0, Math.PI * 2)
+        ctx.globalAlpha = obj.opacity ?? 1
         ctx.fillStyle = obj.fill || '#ffffff'
         ctx.fill()
+        ctx.globalAlpha = 1
         break
       }
       case 'triangle': {
@@ -245,8 +276,10 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
         })
         ctx.closePath()
         if (obj.fill) {
+          ctx.globalAlpha = obj.opacity ?? 1
           ctx.fillStyle = obj.fill
           ctx.fill()
+          ctx.globalAlpha = 1
         }
         if (obj.stroke) {
           ctx.strokeStyle = obj.stroke
@@ -268,8 +301,10 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
         }
         ctx.closePath()
         if (obj.fill) {
+          ctx.globalAlpha = obj.opacity ?? 1
           ctx.fillStyle = obj.fill
           ctx.fill()
+          ctx.globalAlpha = 1
         }
         if (obj.stroke) {
           ctx.strokeStyle = obj.stroke
@@ -279,20 +314,297 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
         break
       }
       case 'text': {
+        ctx.globalAlpha = obj.opacity ?? 1
         ctx.font = `${obj.fontSize || 48}px Arial`
         ctx.fillStyle = obj.fill || '#ffffff'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         ctx.fillText(obj.text || 'Text', 0, 0)
+        ctx.globalAlpha = 1
         break
       }
       case 'latex': {
         // Simplified LaTeX preview (just show the raw text)
+        ctx.globalAlpha = obj.opacity ?? 1
         ctx.font = '24px serif'
         ctx.fillStyle = obj.fill || '#ffffff'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         ctx.fillText(`[${obj.latex}]`, 0, 0)
+        ctx.globalAlpha = 1
+        break
+      }
+      case 'function': {
+        const formula = obj.formula || 'x^2'
+        const domain = obj.domain || { min: -5, max: 5 }
+        const color = obj.color || '#60a5fa'
+        const strokeWidth = obj.strokeWidth || 2
+        
+        // Sample function points
+        const points = mathParser.sampleFunction(formula, domain.min, domain.max, 200)
+        
+        if (points.length > 0) {
+          // Draw main function
+          ctx.strokeStyle = color
+          ctx.lineWidth = strokeWidth
+          ctx.beginPath()
+          
+          points.forEach((point, i) => {
+            const canvasPoint = manimToCanvas(point.x, point.y)
+            if (i === 0) {
+              ctx.moveTo(canvasPoint.x, canvasPoint.y)
+            } else {
+              ctx.lineTo(canvasPoint.x, canvasPoint.y)
+            }
+          })
+          ctx.stroke()
+          
+          // Draw derivative if enabled
+          if (obj.showDerivative) {
+            const derivPoints = points.map(p => ({
+              x: p.x,
+              y: mathParser.derivative(formula, p.x)
+            })).filter(p => !isNaN(p.y) && isFinite(p.y))
+            
+            if (derivPoints.length > 0) {
+              ctx.strokeStyle = '#4ade80' // Green for derivative
+              ctx.lineWidth = strokeWidth
+              ctx.beginPath()
+              
+              derivPoints.forEach((point, i) => {
+                const canvasPoint = manimToCanvas(point.x, point.y)
+                if (i === 0) {
+                  ctx.moveTo(canvasPoint.x, canvasPoint.y)
+                } else {
+                  ctx.lineTo(canvasPoint.x, canvasPoint.y)
+                }
+              })
+              ctx.stroke()
+            }
+          }
+          
+          // Draw second derivative if enabled
+          if (obj.showSecondDerivative) {
+            const secondDerivPoints = points.map(p => {
+              const firstDeriv = mathParser.derivative(formula, p.x)
+              // Approximate second derivative
+              const h = 0.001
+              const derivPlus = mathParser.derivative(formula, p.x + h)
+              const derivMinus = mathParser.derivative(formula, p.x - h)
+              return {
+                x: p.x,
+                y: (derivPlus - derivMinus) / (2 * h)
+              }
+            }).filter(p => !isNaN(p.y) && isFinite(p.y))
+            
+            if (secondDerivPoints.length > 0) {
+              ctx.strokeStyle = '#f59e0b' // Orange for second derivative
+              ctx.lineWidth = strokeWidth
+              ctx.beginPath()
+              
+              secondDerivPoints.forEach((point, i) => {
+                const canvasPoint = manimToCanvas(point.x, point.y)
+                if (i === 0) {
+                  ctx.moveTo(canvasPoint.x, canvasPoint.y)
+                } else {
+                  ctx.lineTo(canvasPoint.x, canvasPoint.y)
+                }
+              })
+              ctx.stroke()
+            }
+          }
+        }
+        break
+      }
+      case 'tangent': {
+        // Find the referenced function
+        const functionObj = scene?.objects.find(o => o.id === obj.functionId)
+        if (!functionObj || functionObj.type !== 'function') {
+          break
+        }
+        
+        const formula = functionObj.formula || 'x^2'
+        const pointX = obj.pointX || 0
+        const length = obj.length || 2
+        const color = obj.color || '#f59e0b'
+        const strokeWidth = obj.strokeWidth || 2
+        
+        // Calculate function value and derivative at pointX
+        const funcY = mathParser.evaluate(formula, pointX)
+        const slope = mathParser.derivative(formula, pointX)
+        
+        if (isNaN(funcY) || isNaN(slope) || !isFinite(funcY) || !isFinite(slope)) {
+          break
+        }
+        
+        // Calculate tangent line endpoints
+        const halfLength = length / 2
+        const dx = halfLength / Math.sqrt(1 + slope * slope)
+        const dy = slope * dx
+        
+        const startX = pointX - dx
+        const startY = funcY - dy
+        const endX = pointX + dx
+        const endY = funcY + dy
+        
+        const start = manimToCanvas(startX, startY)
+        const end = manimToCanvas(endX, endY)
+        
+        ctx.strokeStyle = color
+        ctx.lineWidth = strokeWidth
+        ctx.setLineDash([5, 5])
+        ctx.beginPath()
+        ctx.moveTo(start.x, start.y)
+        ctx.lineTo(end.x, end.y)
+        ctx.stroke()
+        ctx.setLineDash([])
+        
+        // Draw point on function
+        const point = manimToCanvas(pointX, funcY)
+        ctx.fillStyle = color
+        ctx.beginPath()
+        ctx.arc(point.x, point.y, 4, 0, Math.PI * 2)
+        ctx.fill()
+        break
+      }
+      case 'riemann_sum': {
+        try {
+          // Find the referenced function
+          const functionObj = scene?.objects.find(o => o.id === obj.functionId)
+          if (!functionObj || functionObj.type !== 'function') {
+            break
+          }
+          
+          const formula = functionObj.formula || 'x^2'
+          const interval = obj.interval || { a: 0, b: 2 }
+          const n = Math.min(obj.n || 4, 200) // Limit to 200 rectangles max
+          const method = obj.method || 'left'
+          const fillColor = obj.fillColor || '#8b5cf6'
+          const strokeColor = obj.strokeColor || '#ffffff'
+          const strokeWidth = obj.strokeWidth || 1
+          
+          // Calculate rectangles
+          const rectangles = calculateRiemannSum(formula, interval.a, interval.b, n, method)
+          
+          rectangles.forEach(rect => {
+            const left = manimToCanvas(rect.x, rect.y)
+            const right = manimToCanvas(rect.x + rect.width, rect.y)
+            const top = manimToCanvas(rect.x + rect.width / 2, rect.y + rect.height)
+            
+            const width = right.x - left.x
+            const height = top.y - left.y
+            
+            // Draw rectangle
+            ctx.globalAlpha = obj.opacity ?? 0.5
+            ctx.fillStyle = fillColor
+            ctx.fillRect(left.x, left.y, width, height)
+            ctx.globalAlpha = 1
+            
+            // Draw stroke
+            ctx.strokeStyle = strokeColor
+            ctx.lineWidth = strokeWidth
+            ctx.strokeRect(left.x, left.y, width, height)
+          })
+        } catch (error) {
+          // Silently skip rendering if there's an error
+        }
+        break
+      }
+      case 'accumulation': {
+        try {
+          // Find the referenced function
+          const functionObj = scene?.objects.find(o => o.id === obj.functionId)
+          if (!functionObj || functionObj.type !== 'function') {
+            break
+          }
+          
+          const formula = functionObj.formula || 'x^2'
+          const startPoint = obj.startPoint || 0
+          const currentX = obj.currentX || 2
+          const fillColor = obj.fillColor || '#60a5fa'
+          
+          // Sample function and fill area under curve
+          const minX = Math.min(startPoint, currentX)
+          const maxX = Math.max(startPoint, currentX)
+          const points = mathParser.sampleFunction(formula, minX, maxX, 100)
+        
+          if (points.length > 0) {
+            ctx.globalAlpha = (obj.opacity ?? 0.5)
+            ctx.fillStyle = fillColor
+            ctx.beginPath()
+            
+            // Start at bottom left
+            const start = manimToCanvas(minX, 0)
+            ctx.moveTo(start.x, start.y)
+            
+            // Draw along function curve
+            points.forEach(point => {
+              const p = manimToCanvas(point.x, point.y)
+              ctx.lineTo(p.x, p.y)
+            })
+            
+            // Close path to bottom right
+            const end = manimToCanvas(maxX, 0)
+            ctx.lineTo(end.x, end.y)
+            ctx.closePath()
+            ctx.fill()
+            ctx.globalAlpha = 1
+          }
+        } catch (error) {
+          // Silently skip rendering if there's an error
+        }
+        break
+      }
+      case 'taylor_series': {
+        try {
+          // Find the referenced function
+          const functionObj = scene?.objects.find(o => o.id === obj.functionId)
+          if (!functionObj || functionObj.type !== 'function') {
+            break
+          }
+          
+          const formula = functionObj.formula || 'x^2'
+          const center = obj.center || 0
+          const degree = Math.min(obj.degree || 3, 10) // Limit to degree 10
+        const domain = functionObj.domain || { min: -5, max: 5 }
+        const color = obj.color || '#f59e0b'
+        const strokeWidth = obj.strokeWidth || 2
+        
+        // Calculate Taylor polynomial
+        const coefficients = taylorCoefficients(formula, center, degree)
+        
+        // Sample Taylor polynomial
+        const points = []
+        for (let x = domain.min; x <= domain.max; x += 0.1) {
+          let y = 0
+          for (let n = 0; n <= degree; n++) {
+            y += coefficients[n] * Math.pow(x - center, n)
+          }
+          if (!isNaN(y) && isFinite(y)) {
+            points.push({ x, y })
+          }
+        }
+        
+        if (points.length > 0) {
+          ctx.strokeStyle = color
+          ctx.lineWidth = strokeWidth
+          ctx.setLineDash([10, 5])
+          ctx.beginPath()
+          
+          points.forEach((point, i) => {
+            const canvasPoint = manimToCanvas(point.x, point.y)
+            if (i === 0) {
+              ctx.moveTo(canvasPoint.x, canvasPoint.y)
+            } else {
+              ctx.lineTo(canvasPoint.x, canvasPoint.y)
+            }
+          })
+          ctx.stroke()
+          ctx.setLineDash([])
+        }
+        } catch (error) {
+          // Silently skip rendering if there's an error
+        }
         break
       }
     }
@@ -303,22 +615,96 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
     if (isSelected) {
       ctx.save()
       
-      const bounds = getObjectBounds(obj)
-      const topLeft = manimToCanvas(bounds.minX, bounds.maxY)
-      const bottomRight = manimToCanvas(bounds.maxX, bounds.minY)
-      const size = {
-        width: bottomRight.x - topLeft.x,
-        height: bottomRight.y - topLeft.y
+      // Draw shape-specific outline with padding
+      ctx.strokeStyle = '#e94560'
+      ctx.lineWidth = 3
+      ctx.setLineDash([5, 5])
+      const pad = 8
+      
+      switch (obj.type) {
+        case 'rectangle': {
+          ctx.translate(pos.x, pos.y)
+          ctx.rotate(-obj.rotation * Math.PI / 180)
+          const w = obj.width * scaleX
+          const h = obj.height * scaleY
+          ctx.strokeRect(-w/2 - pad, -h/2 - pad, w + pad*2, h + pad*2)
+          break
+        }
+        case 'circle':
+        case 'dot': {
+          const r = obj.radius * scaleX
+          ctx.beginPath()
+          ctx.arc(pos.x, pos.y, r + pad, 0, Math.PI * 2)
+          ctx.stroke()
+          break
+        }
+        case 'triangle': {
+          const verts = obj.vertices || [{ x: 0, y: 1 }, { x: -0.866, y: -0.5 }, { x: 0.866, y: -0.5 }]
+          ctx.beginPath()
+          
+          // Scale triangle slightly larger from center for outline
+          const scale = 1 + (pad * 2) / (scaleX * 2) // Approximate scale factor
+          
+          verts.forEach((v, i) => {
+            // Scale vertex outward from center
+            const scaledX = v.x * scale
+            const scaledY = v.y * scale
+            const outlinePos = manimToCanvas(obj.x + scaledX, obj.y + scaledY)
+            
+            if (i === 0) ctx.moveTo(outlinePos.x, outlinePos.y)
+            else ctx.lineTo(outlinePos.x, outlinePos.y)
+          })
+          ctx.closePath()
+          ctx.stroke()
+          break
+        }
+        case 'polygon': {
+          const r = obj.radius
+          const sides = obj.sides || 5
+          ctx.beginPath()
+          for (let i = 0; i < sides; i++) {
+            const angle = (i / sides) * Math.PI * 2 - Math.PI / 2
+            const mx = obj.x + Math.cos(angle) * (r + pad / scaleX)
+            const my = obj.y + Math.sin(angle) * (r + pad / scaleY)
+            const p = manimToCanvas(mx, my)
+            if (i === 0) ctx.moveTo(p.x, p.y)
+            else ctx.lineTo(p.x, p.y)
+          }
+          ctx.closePath()
+          ctx.stroke()
+          break
+        }
+        case 'line':
+        case 'arrow': {
+          const start = manimToCanvas(obj.x, obj.y)
+          const end = manimToCanvas(obj.x2, obj.y2)
+          const dx = end.x - start.x
+          const dy = end.y - start.y
+          const len = Math.sqrt(dx * dx + dy * dy)
+          const padX = (dx / len) * pad
+          const padY = (dy / len) * pad
+          ctx.beginPath()
+          ctx.moveTo(start.x - padX, start.y - padY)
+          ctx.lineTo(end.x + padX, end.y + padY)
+          ctx.stroke()
+          break
+        }
+        default: {
+          // Fallback to bounding box for text/latex
+          ctx.translate(pos.x, pos.y)
+          ctx.rotate(-obj.rotation * Math.PI / 180)
+          const bounds = getObjectBounds(obj)
+          const w = (bounds.maxX - bounds.minX) * scaleX
+          const h = (bounds.maxY - bounds.minY) * scaleY
+          ctx.strokeRect(-w/2 - pad, -h/2 - pad, w + pad*2, h + pad*2)
+        }
       }
       
-      // Selection outline
-      ctx.strokeStyle = '#e94560'
-      ctx.lineWidth = 2
-      ctx.setLineDash([5, 5])
-      ctx.strokeRect(topLeft.x - 4, topLeft.y - 4, size.width + 8, size.height + 8)
       ctx.setLineDash([])
+      ctx.restore()
       
-      // Draw vertex handles for shapes with vertices
+      // Draw vertex handles (without rotation)
+      ctx.save()
       if (obj.type === 'triangle') {
         ctx.fillStyle = '#4ade80'
         const verts = obj.vertices || []
@@ -354,9 +740,16 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
         ctx.beginPath()
         ctx.arc(end.x, end.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
         ctx.fill()
-      } else {
-        // Draw corner resize handles for other shapes
+      } else if (obj.type === 'circle' || obj.type === 'polygon') {
+        // Draw corner resize handles at bounding box corners
         ctx.fillStyle = '#e94560'
+        const bounds = getObjectBounds(obj)
+        const topLeft = manimToCanvas(bounds.minX, bounds.maxY)
+        const bottomRight = manimToCanvas(bounds.maxX, bounds.minY)
+        const size = {
+          width: bottomRight.x - topLeft.x,
+          height: bottomRight.y - topLeft.y
+        }
         const handles = getHandles(obj, topLeft, size)
         handles.forEach(handle => {
           ctx.fillRect(handle.x - HANDLE_SIZE/2, handle.y - HANDLE_SIZE/2, HANDLE_SIZE, HANDLE_SIZE)
@@ -424,6 +817,153 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
           minY: Math.min(obj.y, obj.y2),
           maxY: Math.max(obj.y, obj.y2)
         }
+      case 'function': {
+        const domain = obj.domain || { min: -5, max: 5 }
+        const formula = obj.formula || 'x^2'
+        const points = mathParser.sampleFunction(formula, domain.min, domain.max, 50)
+        if (points.length === 0) {
+          return { minX: domain.min, maxX: domain.max, minY: -2, maxY: 2 }
+        }
+        const ys = points.map(p => p.y).filter(y => !isNaN(y) && isFinite(y))
+        if (ys.length === 0) {
+          return { minX: domain.min, maxX: domain.max, minY: -2, maxY: 2 }
+        }
+        return {
+          minX: domain.min,
+          maxX: domain.max,
+          minY: Math.min(...ys),
+          maxY: Math.max(...ys)
+        }
+      }
+      case 'tangent': {
+        const functionObj = scene?.objects.find(o => o.id === obj.functionId)
+        if (!functionObj || functionObj.type !== 'function') {
+          return { minX: obj.pointX - 1, maxX: obj.pointX + 1, minY: -1, maxY: 1 }
+        }
+        
+        const formula = functionObj.formula || 'x^2'
+        const pointX = obj.pointX || 0
+        const length = obj.length || 2
+        
+        const funcY = mathParser.evaluate(formula, pointX)
+        const slope = mathParser.derivative(formula, pointX)
+        
+        if (isNaN(funcY) || isNaN(slope) || !isFinite(funcY) || !isFinite(slope)) {
+          return { minX: pointX - length/2, maxX: pointX + length/2, minY: funcY - 1, maxY: funcY + 1 }
+        }
+        
+        const halfLength = length / 2
+        const y1 = funcY - slope * halfLength
+        const y2 = funcY + slope * halfLength
+        
+        return {
+          minX: pointX - halfLength,
+          maxX: pointX + halfLength,
+          minY: Math.min(y1, y2),
+          maxY: Math.max(y1, y2)
+        }
+      }
+      case 'riemann_sum': {
+        try {
+          const functionObj = scene?.objects.find(o => o.id === obj.functionId)
+          if (!functionObj || functionObj.type !== 'function') {
+            const interval = obj.interval || { a: 0, b: 2 }
+            return { minX: interval.a, maxX: interval.b, minY: -1, maxY: 1 }
+          }
+          
+          const formula = functionObj.formula || 'x^2'
+          const interval = obj.interval || { a: 0, b: 2 }
+          const n = Math.min(obj.n || 4, 200)
+          const method = obj.method || 'left'
+          
+          const rectangles = calculateRiemannSum(formula, interval.a, interval.b, n, method)
+          if (rectangles.length === 0) {
+            return { minX: interval.a, maxX: interval.b, minY: -1, maxY: 1 }
+          }
+          
+          const minY = Math.min(...rectangles.map(r => r.y))
+          const maxY = Math.max(...rectangles.map(r => r.y + r.height))
+          
+          return {
+            minX: interval.a,
+            maxX: interval.b,
+            minY: minY,
+            maxY: maxY
+          }
+        } catch (error) {
+          const interval = obj.interval || { a: 0, b: 2 }
+          return { minX: interval.a, maxX: interval.b, minY: -1, maxY: 1 }
+        }
+      }
+      case 'accumulation': {
+        try {
+          const functionObj = scene?.objects.find(o => o.id === obj.functionId)
+          if (!functionObj || functionObj.type !== 'function') {
+            const startPoint = obj.startPoint || 0
+            const currentX = obj.currentX || 2
+            return { minX: Math.min(startPoint, currentX), maxX: Math.max(startPoint, currentX), minY: 0, maxY: 2 }
+          }
+          
+          const formula = functionObj.formula || 'x^2'
+          const startPoint = obj.startPoint || 0
+          const currentX = obj.currentX || 2
+          const minX = Math.min(startPoint, currentX)
+          const maxX = Math.max(startPoint, currentX)
+          
+          const points = mathParser.sampleFunction(formula, minX, maxX, 50)
+          if (points.length === 0) {
+            return { minX, maxX, minY: 0, maxY: 2 }
+          }
+          const ys = points.map(p => p.y).filter(y => !isNaN(y) && isFinite(y) && y >= 0)
+          const maxY = ys.length > 0 ? Math.max(...ys) : 2
+          
+          return { minX, maxX, minY: 0, maxY }
+        } catch (error) {
+          const startPoint = obj.startPoint || 0
+          const currentX = obj.currentX || 2
+          return { minX: Math.min(startPoint, currentX), maxX: Math.max(startPoint, currentX), minY: 0, maxY: 2 }
+        }
+      }
+      case 'taylor_series': {
+        try {
+          const functionObj = scene?.objects.find(o => o.id === obj.functionId)
+          if (!functionObj || functionObj.type !== 'function') {
+            const domain = functionObj?.domain || { min: -5, max: 5 }
+            return { minX: domain.min, maxX: domain.max, minY: -2, maxY: 2 }
+          }
+          
+          const formula = functionObj.formula || 'x^2'
+          const center = obj.center || 0
+          const degree = Math.min(obj.degree || 3, 10)
+          const domain = functionObj.domain || { min: -5, max: 5 }
+          
+          const coefficients = taylorCoefficients(formula, center, degree)
+        const points = []
+        for (let x = domain.min; x <= domain.max; x += 0.2) {
+          let y = 0
+          for (let n = 0; n <= degree; n++) {
+            y += coefficients[n] * Math.pow(x - center, n)
+          }
+          if (!isNaN(y) && isFinite(y)) {
+            points.push({ x, y })
+          }
+        }
+        
+        if (points.length === 0) {
+          return { minX: domain.min, maxX: domain.max, minY: -2, maxY: 2 }
+        }
+        const ys = points.map(p => p.y).filter(y => !isNaN(y) && isFinite(y))
+        return {
+          minX: domain.min,
+          maxX: domain.max,
+          minY: Math.min(...ys),
+          maxY: Math.max(...ys)
+        }
+        } catch (error) {
+          const domain = { min: -5, max: 5 }
+          return { minX: domain.min, maxX: domain.max, minY: -2, maxY: 2 }
+        }
+      }
       default:
         return { minX: obj.x - 1, maxX: obj.x + 1, minY: obj.y - 0.5, maxY: obj.y + 0.5 }
     }
@@ -434,16 +974,210 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
     const manim = canvasToManim(canvasX, canvasY)
     
     // Check objects in reverse z-order (top first)
-    const sortedObjects = [...scene.objects].sort((a, b) => (b.zIndex || 0) - (a.zIndex || 0))
+    // When z-index is equal, later objects (higher array index) are in front
+    const sortedObjects = scene.objects
+      .map((obj, index) => ({ obj, index }))
+      .sort((a, b) => {
+        const zDiff = (b.obj.zIndex || 0) - (a.obj.zIndex || 0)
+        if (zDiff !== 0) return zDiff
+        // If z-index is equal, later in array = in front
+        return b.index - a.index
+      })
     
-    for (const obj of sortedObjects) {
-      const bounds = getObjectBounds(obj)
-      if (manim.x >= bounds.minX && manim.x <= bounds.maxX &&
-          manim.y >= bounds.minY && manim.y <= bounds.maxY) {
+    for (const { obj } of sortedObjects) {
+      if (hitTestShape(obj, manim.x, manim.y)) {
         return obj.id
       }
     }
     return null
+  }
+
+  // More precise hit testing based on actual shape geometry
+  const hitTestShape = (obj, mx, my) => {
+    switch (obj.type) {
+      case 'rectangle': {
+        const halfW = obj.width / 2
+        const halfH = obj.height / 2
+        return mx >= obj.x - halfW && mx <= obj.x + halfW &&
+               my >= obj.y - halfH && my <= obj.y + halfH
+      }
+      case 'circle':
+      case 'dot': {
+        const dist = Math.sqrt((mx - obj.x) ** 2 + (my - obj.y) ** 2)
+        return dist <= obj.radius
+      }
+      case 'triangle': {
+        // Check if point is inside the triangle using barycentric coordinates
+        const verts = obj.vertices || [{ x: 0, y: 1 }, { x: -0.866, y: -0.5 }, { x: 0.866, y: -0.5 }]
+        const v0 = { x: obj.x + verts[0].x, y: obj.y + verts[0].y }
+        const v1 = { x: obj.x + verts[1].x, y: obj.y + verts[1].y }
+        const v2 = { x: obj.x + verts[2].x, y: obj.y + verts[2].y }
+        
+        const sign = (p1, p2, p3) => {
+          return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
+        }
+        
+        const d1 = sign({ x: mx, y: my }, v0, v1)
+        const d2 = sign({ x: mx, y: my }, v1, v2)
+        const d3 = sign({ x: mx, y: my }, v2, v0)
+        
+        const hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0)
+        const hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0)
+        
+        return !(hasNeg && hasPos)
+      }
+      case 'polygon': {
+        // Check if point is inside regular polygon (simplified circle check)
+        const dist = Math.sqrt((mx - obj.x) ** 2 + (my - obj.y) ** 2)
+        return dist <= obj.radius
+      }
+      case 'line':
+      case 'arrow': {
+        // Check if point is near the line (within stroke width distance)
+        const distToLine = pointToLineDistance(mx, my, obj.x, obj.y, obj.x2, obj.y2)
+        const strokeRadius = (obj.strokeWidth || 2) * 0.1 // Convert pixels to manim units roughly
+        return distToLine <= Math.max(strokeRadius, 0.2)
+      }
+      case 'text':
+      case 'latex': {
+        // Use bounding box for text
+        const bounds = getObjectBounds(obj)
+        return mx >= bounds.minX && mx <= bounds.maxX &&
+               my >= bounds.minY && my <= bounds.maxY
+      }
+      case 'function': {
+        // Check if point is near the function curve
+        const formula = obj.formula || 'x^2'
+        const domain = obj.domain || { min: -5, max: 5 }
+        
+        // Check if x is in domain
+        if (mx < domain.min || mx > domain.max) return false
+        
+        // Get function value at this x
+        const funcY = mathParser.evaluate(formula, mx)
+        if (isNaN(funcY) || !isFinite(funcY)) return false
+        
+        // Check if y is within threshold distance from function
+        const threshold = 0.3 // Manim units
+        return Math.abs(my - funcY) <= threshold
+      }
+      case 'tangent': {
+        // Check if point is near the tangent line
+        const functionObj = scene?.objects.find(o => o.id === obj.functionId)
+        if (!functionObj || functionObj.type !== 'function') return false
+        
+        const formula = functionObj.formula || 'x^2'
+        const pointX = obj.pointX || 0
+        const length = obj.length || 2
+        
+        // Calculate function value and derivative
+        const funcY = mathParser.evaluate(formula, pointX)
+        const slope = mathParser.derivative(formula, pointX)
+        
+        if (isNaN(funcY) || isNaN(slope) || !isFinite(funcY) || !isFinite(slope)) {
+          return false
+        }
+        
+        // Check if point is on the tangent line
+        const halfLength = length / 2
+        if (mx < pointX - halfLength || mx > pointX + halfLength) return false
+        
+        const expectedY = funcY + slope * (mx - pointX)
+        const threshold = 0.3
+        return Math.abs(my - expectedY) <= threshold
+      }
+      case 'riemann_sum': {
+        try {
+          // Check if point is inside any rectangle
+          const functionObj = scene?.objects.find(o => o.id === obj.functionId)
+          if (!functionObj || functionObj.type !== 'function') return false
+          
+          const formula = functionObj.formula || 'x^2'
+          const interval = obj.interval || { a: 0, b: 2 }
+          const n = Math.min(obj.n || 4, 200)
+          const method = obj.method || 'left'
+          
+          const rectangles = calculateRiemannSum(formula, interval.a, interval.b, n, method)
+          
+          return rectangles.some(rect => {
+            return mx >= rect.x && mx <= rect.x + rect.width &&
+                   my >= rect.y && my <= rect.y + rect.height
+          })
+        } catch (error) {
+          return false
+        }
+      }
+      case 'accumulation': {
+        try {
+          const functionObj = scene?.objects.find(o => o.id === obj.functionId)
+          if (!functionObj || functionObj.type !== 'function') return false
+          
+          const formula = functionObj.formula || 'x^2'
+          const startPoint = obj.startPoint || 0
+          const currentX = obj.currentX || 2
+          
+          const minX = Math.min(startPoint, currentX)
+          const maxX = Math.max(startPoint, currentX)
+          
+          if (mx < minX || mx > maxX) return false
+          
+          const funcY = mathParser.evaluate(formula, mx)
+          if (isNaN(funcY) || !isFinite(funcY)) return false
+          
+          // Check if point is in the area under the curve
+          return my >= 0 && my <= funcY
+        } catch (error) {
+          return false
+        }
+      }
+      case 'taylor_series': {
+        try {
+          const functionObj = scene?.objects.find(o => o.id === obj.functionId)
+          if (!functionObj || functionObj.type !== 'function') return false
+          
+          const formula = functionObj.formula || 'x^2'
+          const center = obj.center || 0
+          const degree = Math.min(obj.degree || 3, 10)
+          const domain = functionObj.domain || { min: -5, max: 5 }
+          
+          if (mx < domain.min || mx > domain.max) return false
+          
+          // Calculate Taylor polynomial value
+          const coefficients = taylorCoefficients(formula, center, degree)
+          let taylorY = 0
+          for (let n = 0; n <= degree; n++) {
+            taylorY += coefficients[n] * Math.pow(mx - center, n)
+          }
+          
+          if (isNaN(taylorY) || !isFinite(taylorY)) return false
+          
+          const threshold = 0.3
+          return Math.abs(my - taylorY) <= threshold
+        } catch (error) {
+          return false
+        }
+      }
+      default: {
+        const bounds = getObjectBounds(obj)
+        return mx >= bounds.minX && mx <= bounds.maxX &&
+               my >= bounds.minY && my <= bounds.maxY
+      }
+    }
+  }
+
+  // Helper: calculate distance from point to line segment
+  const pointToLineDistance = (px, py, x1, y1, x2, y2) => {
+    const dx = x2 - x1
+    const dy = y2 - y1
+    const lengthSq = dx * dx + dy * dy
+    
+    if (lengthSq === 0) return Math.sqrt((px - x1) ** 2 + (py - y1) ** 2)
+    
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lengthSq))
+    const projX = x1 + t * dx
+    const projY = y1 + t * dy
+    
+    return Math.sqrt((px - projX) ** 2 + (py - projY) ** 2)
   }
 
   // Check if clicking on a resize handle
@@ -725,23 +1459,55 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
     setActiveHandle(null)
   }
 
-  const handlePaletteClick = (type) => {
+  const handlePaletteClick = (type, event) => {
+    if (event) event.stopPropagation()
+    if (type === 'riemann_sum') {
+      setOpenPaletteMenu(openPaletteMenu === 'riemann_sum' ? null : 'riemann_sum')
+      return
+    }
+    setOpenPaletteMenu(null)
     onAddObject(type)
+  }
+
+  const handleRiemannSelection = (option) => {
+    onAddObject('riemann_sum', {
+      method: option.method,
+      n: option.n,
+      interval: option.interval || { a: -3, b: 3 }
+    })
+    setOpenPaletteMenu(null)
   }
 
   return (
     <div className="canvas-container" ref={containerRef}>
       <div className="shape-palette">
         {SHAPE_PALETTE.map(shape => (
-          <button
-            key={shape.type}
-            className="palette-item"
-            onClick={() => handlePaletteClick(shape.type)}
-            title={shape.label}
-          >
-            <span className="palette-icon">{shape.icon}</span>
-            <span className="palette-label">{shape.label}</span>
-          </button>
+          <div key={shape.type} className="palette-item-wrapper">
+            <button
+              className={`palette-item ${shape.type === 'riemann_sum' && openPaletteMenu === 'riemann_sum' ? 'active' : ''}`}
+              onClick={(event) => handlePaletteClick(shape.type, event)}
+              title={shape.label}
+            >
+              <span className="palette-icon">{shape.icon}</span>
+              <span className="palette-label">{shape.label}</span>
+            </button>
+            {shape.type === 'riemann_sum' && openPaletteMenu === 'riemann_sum' && (
+              <div ref={dropdownRef} className="palette-dropdown">
+                {RIEMANN_OPTIONS.map(option => (
+                  <button
+                    key={option.label}
+                    className="dropdown-item"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      handleRiemannSelection(option)
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         ))}
         
         <div className="palette-divider" />

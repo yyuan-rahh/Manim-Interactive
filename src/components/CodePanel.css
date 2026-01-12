@@ -32,17 +32,48 @@
   color: var(--text-primary);
 }
 
-.copy-btn {
+.code-actions {
   margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.action-btn,
+.copy-btn {
   padding: 4px 10px;
   background: var(--bg-secondary);
   border-radius: 4px;
   color: var(--text-secondary);
   font-size: 11px;
+  border: 1px solid var(--border);
 }
 
+.action-btn:hover,
 .copy-btn:hover {
-  color: var(--accent);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.edit-btn:hover {
+  color: #60a5fa;
+}
+
+.save-btn {
+  color: #4ade80;
+  border-color: #4ade80;
+}
+
+.save-btn:hover {
+  background: rgba(74, 222, 128, 0.1);
+}
+
+.cancel-btn {
+  color: #f87171;
+  border-color: #f87171;
+}
+
+.cancel-btn:hover {
+  background: rgba(248, 113, 113, 0.1);
 }
 
 .code-content {
@@ -68,5 +99,24 @@
 
 .logs-block {
   color: var(--text-secondary);
+}
+
+.code-editor {
+  width: 100%;
+  min-height: 400px;
+  background: var(--bg-secondary);
+  color: #a6e22e;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.code-editor:focus {
+  border-color: var(--accent);
 }
 

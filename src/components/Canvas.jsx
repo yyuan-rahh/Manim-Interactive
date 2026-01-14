@@ -158,7 +158,32 @@ const getSnapGeometry = (obj) => {
   return { points, segments }
 }
 
-function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAddObject, onDuplicateObject, onDeleteObject }) {
+const getVisibleObjectsAtTime = (objects, t) => {
+  const objs = objects || []
+  const replaced = new Set()
+
+  // When a transform target starts (at its delay), the source is replaced.
+  for (const obj of objs) {
+    if (!obj?.transformFromId) continue
+    const delay = obj.delay || 0
+    if (t >= delay) replaced.add(obj.transformFromId)
+  }
+
+  return objs.filter(obj => {
+    if (!obj) return false
+    const delay = obj.delay || 0
+    const runTime = obj.runTime || 1
+    // All objects (including transform targets) are visible starting from their delay time
+    if (t < delay) return false
+    // Non-transform-targets disappear after their runTime ends
+    if (!obj.transformFromId && t >= delay + runTime) return false
+    // Objects that have been replaced by a transform target are hidden
+    if (replaced.has(obj.id)) return false
+    return true
+  })
+}
+
+function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUpdateObject, onAddObject, onDuplicateObject, onDeleteObject }) {
   const canvasRef = useRef(null)
   const containerRef = useRef(null)
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 450 })
@@ -282,19 +307,20 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
     
     // Draw objects (non-LaTeX objects are drawn on canvas; LaTeX is rendered as DOM overlay)
     if (scene?.objects) {
-      const sortedObjects = [...scene.objects].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0))
+      const visible = getVisibleObjectsAtTime(scene.objects, currentTime)
+      const sortedObjects = [...visible].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0))
       sortedObjects.forEach(obj => {
         if (obj.type === 'latex') return
         drawObject(ctx, obj, obj.id === selectedObjectId, scene)
       })
     }
     
-  }, [scene, selectedObjectId, canvasSize, manimToCanvas])
+  }, [scene, currentTime, selectedObjectId, canvasSize, manimToCanvas])
 
   const latexObjects = useMemo(() => {
     const objs = scene?.objects || []
-    return objs.filter(o => o.type === 'latex')
-  }, [scene?.objects])
+    return getVisibleObjectsAtTime(objs, currentTime).filter(o => o.type === 'latex')
+  }, [scene?.objects, currentTime])
 
   const drawObject = (ctx, obj, isSelected, scene) => {
     const pos = manimToCanvas(obj.x, obj.y)
@@ -541,19 +567,39 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
         }
         case 'triangle': {
           const verts = obj.vertices || [{ x: 0, y: 1 }, { x: -0.866, y: -0.5 }, { x: 0.866, y: -0.5 }]
+
+          // Draw outline centered on the triangle center, in the same local space as the triangle itself.
+          // We scale vertices uniformly so the pink dotted outline is the same shape, just larger.
+          ctx.translate(pos.x, pos.y)
+          ctx.rotate(-obj.rotation * Math.PI / 180)
+
+          // Compute triangle centroid in LOCAL (object) coords so scaling stays centered on the *actual* triangle,
+          // even if the vertices are no longer centered around (0,0) after editing.
+          const centroid = verts.reduce(
+            (acc, v) => ({ x: acc.x + v.x, y: acc.y + v.y }),
+            { x: 0, y: 0 }
+          )
+          centroid.x /= verts.length || 1
+          centroid.y /= verts.length || 1
+
+          // Convert vertices into local canvas coords and compute a uniform scale factor that expands by ~`pad` pixels,
+          // measuring distance from the centroid (not from the object origin).
+          const localVerts = verts.map(v => ({ x: v.x * scaleX, y: -v.y * scaleY }))
+          const cCanvas = { x: centroid.x * scaleX, y: -centroid.y * scaleY }
+          const maxDist = Math.max(
+            1e-6,
+            ...localVerts.map(p => Math.hypot(p.x - cCanvas.x, p.y - cCanvas.y))
+          )
+          // Make triangle outline a bit more prominent than other shapes
+          const trianglePad = pad * 2.25
+          const outlineScale = 1 + (trianglePad / maxDist)
+
           ctx.beginPath()
-          
-          // Scale triangle slightly larger from center for outline
-          const scale = 1 + (pad * 2) / (scaleX * 2) // Approximate scale factor
-          
-          verts.forEach((v, i) => {
-            // Scale vertex outward from center
-            const scaledX = v.x * scale
-            const scaledY = v.y * scale
-            const outlinePos = manimToCanvas(obj.x + scaledX, obj.y + scaledY)
-            
-            if (i === 0) ctx.moveTo(outlinePos.x, outlinePos.y)
-            else ctx.lineTo(outlinePos.x, outlinePos.y)
+          localVerts.forEach((p, i) => {
+            const x = cCanvas.x + (p.x - cCanvas.x) * outlineScale
+            const y = cCanvas.y + (p.y - cCanvas.y) * outlineScale
+            if (i === 0) ctx.moveTo(x, y)
+            else ctx.lineTo(x, y)
           })
           ctx.closePath()
           ctx.stroke()
@@ -792,11 +838,12 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
 
   const hitTest = (canvasX, canvasY) => {
     if (!scene?.objects) return null
+    const objects = getVisibleObjectsAtTime(scene.objects, currentTime)
     const manim = canvasToManim(canvasX, canvasY)
     
     // Check objects in reverse z-order (top first)
     // When z-index is equal, later objects (higher array index) are in front
-    const sortedObjects = scene.objects
+    const sortedObjects = objects
       .map((obj, index) => ({ obj, index }))
       .sort((a, b) => {
         const zDiff = (b.obj.zIndex || 0) - (a.obj.zIndex || 0)
@@ -1063,7 +1110,8 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
     }
 
     // Snap to other shapes (vertices/edges/perimeters)
-    const others = (scene?.objects || []).filter(o => o.id !== excludeId)
+    const visible = getVisibleObjectsAtTime(scene?.objects || [], currentTime)
+    const others = visible.filter(o => o.id !== excludeId)
     if (others.length > 0) {
       // Use the raw (pre-grid) position as the reference for finding the closest snap target.
       // This makes snapping feel consistent even when grid-snapping nudges the point slightly.
@@ -1109,7 +1157,7 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
       x: parseFloat(snappedX.toFixed(2)), 
       y: parseFloat(snappedY.toFixed(2)) 
     }
-  }, [snapEnabled, scene?.objects])
+  }, [snapEnabled, scene?.objects, currentTime])
 
   const handleMouseDown = (e) => {
     // Ctrl+click (macOS) should open context menu
@@ -1126,7 +1174,7 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
     
     // First check if clicking on a handle of the selected object
     if (selectedObjectId) {
-      const selectedObj = scene.objects.find(o => o.id === selectedObjectId)
+      const selectedObj = getVisibleObjectsAtTime(scene.objects, currentTime).find(o => o.id === selectedObjectId)
       const handleHit = hitTestHandle(x, y, selectedObj)
       
       if (handleHit) {
@@ -1144,7 +1192,7 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
     onSelectObject(hitId)
     
     if (hitId) {
-      const obj = scene.objects.find(o => o.id === hitId)
+      const obj = getVisibleObjectsAtTime(scene.objects, currentTime).find(o => o.id === hitId)
       if (obj) {
         setIsDragging(true)
         setDragType('move')
@@ -1290,39 +1338,53 @@ function Canvas({ scene, selectedObjectId, onSelectObject, onUpdateObject, onAdd
       if (obj.type === 'rectangle' && activeHandle?.startsWith('corner-')) {
         const cornerIndex = parseInt(activeHandle.split('-')[1])
         // Corners: 0=NW, 1=NE, 2=SW, 3=SE
-        let newX = dragOffset.x
-        let newY = dragOffset.y
-        let newWidth = dragOffset.width
-        let newHeight = dragOffset.height
-        
-        // Calculate new dimensions based on which corner is being dragged
-        if (cornerIndex === 0) { // NW
-          newWidth = Math.max(0.2, dragOffset.width - dx)
-          newHeight = Math.max(0.2, dragOffset.height + dy)
-          newX = dragOffset.x + dx / 2
-          newY = dragOffset.y + dy / 2
-        } else if (cornerIndex === 1) { // NE
-          newWidth = Math.max(0.2, dragOffset.width + dx)
-          newHeight = Math.max(0.2, dragOffset.height + dy)
-          newX = dragOffset.x + dx / 2
-          newY = dragOffset.y + dy / 2
-        } else if (cornerIndex === 2) { // SW
-          newWidth = Math.max(0.2, dragOffset.width - dx)
-          newHeight = Math.max(0.2, dragOffset.height - dy)
-          newX = dragOffset.x + dx / 2
-          newY = dragOffset.y + dy / 2
-        } else if (cornerIndex === 3) { // SE
-          newWidth = Math.max(0.2, dragOffset.width + dx)
-          newHeight = Math.max(0.2, dragOffset.height - dy)
-          newX = dragOffset.x + dx / 2
-          newY = dragOffset.y + dy / 2
+        const MIN_W = 0.2
+        const MIN_H = 0.2
+
+        const left0 = dragOffset.x - dragOffset.width / 2
+        const right0 = dragOffset.x + dragOffset.width / 2
+        const bottom0 = dragOffset.y - dragOffset.height / 2
+        const top0 = dragOffset.y + dragOffset.height / 2
+
+        let left = left0
+        let right = right0
+        let bottom = bottom0
+        let top = top0
+
+        // Dragged corner moves; opposite edges remain fixed.
+        // Clamp the dragged edges so they never cross the opposite side beyond a minimum size.
+        if (cornerIndex === 0) { // NW: move left + top
+          left = Math.min(left0 + dx, right0 - MIN_W)
+          top = Math.max(top0 + dy, bottom0 + MIN_H)
+          right = right0
+          bottom = bottom0
+        } else if (cornerIndex === 1) { // NE: move right + top
+          right = Math.max(right0 + dx, left0 + MIN_W)
+          top = Math.max(top0 + dy, bottom0 + MIN_H)
+          left = left0
+          bottom = bottom0
+        } else if (cornerIndex === 2) { // SW: move left + bottom
+          left = Math.min(left0 + dx, right0 - MIN_W)
+          bottom = Math.min(bottom0 + dy, top0 - MIN_H)
+          right = right0
+          top = top0
+        } else if (cornerIndex === 3) { // SE: move right + bottom
+          right = Math.max(right0 + dx, left0 + MIN_W)
+          bottom = Math.min(bottom0 + dy, top0 - MIN_H)
+          left = left0
+          top = top0
         }
-        
+
+        const newWidth = Math.max(MIN_W, right - left)
+        const newHeight = Math.max(MIN_H, top - bottom)
+        const newX = (left + right) / 2
+        const newY = (bottom + top) / 2
+
         onUpdateObject(selectedObjectId, {
           width: parseFloat(newWidth.toFixed(2)),
           height: parseFloat(newHeight.toFixed(2)),
           x: parseFloat(newX.toFixed(2)),
-          y: parseFloat(newY.toFixed(2))
+          y: parseFloat(newY.toFixed(2)),
         })
         return
       }

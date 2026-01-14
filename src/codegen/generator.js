@@ -129,10 +129,16 @@ function generateDefaultAnimations(objects, { idToSourceVar, idToTargetVar }) {
       // After transforms complete, advance time and update mapping so chains work
       currentTime = Math.max(currentTime, delay + Math.max(...transforms.map(t => t.runTime)))
       transforms.forEach(t => {
-        // After ReplacementTransform, the "current" visible object should be the target
-        out.push(`${t.srcVar} = ${t.tgtVar}`)
-        curVarById.set(t.srcId, t.tgtVar)
-        curVarById.set(t.objId, t.tgtVar)
+        // For Transform: the source object remains on screen, keep using it
+        // For ReplacementTransform: the target replaces the source
+        if (t.tType === 'ReplacementTransform') {
+          out.push(`${t.srcVar} = ${t.tgtVar}`)
+          curVarById.set(t.srcId, t.tgtVar)
+          curVarById.set(t.objId, t.tgtVar)
+        } else {
+          // Regular Transform: source stays on screen, subsequent transforms should use srcVar
+          curVarById.set(t.objId, t.srcVar)
+        }
       })
     }
   })
@@ -343,9 +349,16 @@ function generateAnimations(objects, { idToSourceVar, idToTargetVar }) {
       animations.push(`self.play(${transforms.map(t => `${t.tType}(${t.srcVar}, ${t.tgtVar}, run_time=${t.runTime})`).join(', ')})`)
       currentTime = Math.max(currentTime, delay + Math.max(...transforms.map(t => t.runTime)))
       transforms.forEach(t => {
-        animations.push(`${t.srcVar} = ${t.tgtVar}`)
-        curVarById.set(t.srcId, t.tgtVar)
-        curVarById.set(t.objId, t.tgtVar)
+        // For Transform: the source object remains on screen, keep using it
+        // For ReplacementTransform: the target replaces the source
+        if (t.tType === 'ReplacementTransform') {
+          animations.push(`${t.srcVar} = ${t.tgtVar}`)
+          curVarById.set(t.srcId, t.tgtVar)
+          curVarById.set(t.objId, t.tgtVar)
+        } else {
+          // Regular Transform: source stays on screen, subsequent transforms should use srcVar
+          curVarById.set(t.objId, t.srcVar)
+        }
       })
     }
     })

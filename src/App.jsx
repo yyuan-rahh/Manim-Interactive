@@ -14,6 +14,7 @@ function App() {
   const [project, setProject] = useState(createEmptyProject())
   const [activeSceneId, setActiveSceneId] = useState(project.scenes[0]?.id)
   const [selectedObjectId, setSelectedObjectId] = useState(null)
+  const [currentTime, setCurrentTime] = useState(0)
   const [generatedCode, setGeneratedCode] = useState('')
   const [customCode, setCustomCode] = useState('')
   const [isCustomCodeSynced, setIsCustomCodeSynced] = useState(true)
@@ -35,6 +36,12 @@ function App() {
 
   const activeScene = project.scenes.find(s => s.id === activeSceneId)
   const selectedObject = activeScene?.objects.find(o => o.id === selectedObjectId)
+
+  // Keep time within scene bounds when switching scenes / durations
+  useEffect(() => {
+    const dur = activeScene?.duration || 0
+    setCurrentTime(t => Math.max(0, Math.min(dur, t)))
+  }, [activeSceneId, activeScene?.duration])
 
   useEffect(() => {
     stateRef.current = { project, activeSceneId, selectedObjectId, customCode, isCustomCodeSynced }
@@ -502,6 +509,7 @@ function App() {
         <div className="center-panel">
           <Canvas
             scene={activeScene}
+            currentTime={currentTime}
             selectedObjectId={selectedObjectId}
             onSelectObject={setSelectedObjectId}
             onUpdateObject={updateObject}
@@ -513,6 +521,8 @@ function App() {
           <Timeline
             scene={activeScene}
             selectedObjectId={selectedObjectId}
+            currentTime={currentTime}
+            onTimeChange={setCurrentTime}
             onAddKeyframe={addKeyframe}
             onSelectObject={setSelectedObjectId}
             onUpdateObject={updateObject}

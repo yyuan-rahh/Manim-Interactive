@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import './Timeline.css'
 
-function Timeline({ scene, selectedObjectId, onAddKeyframe, onSelectObject, onUpdateObject }) {
-  const [currentTime, setCurrentTime] = useState(0)
+function Timeline({ scene, selectedObjectId, currentTime, onTimeChange, onAddKeyframe, onSelectObject, onUpdateObject }) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [dragState, setDragState] = useState(null)
   const trackRefs = useRef({})
@@ -63,7 +62,7 @@ function Timeline({ scene, selectedObjectId, onAddKeyframe, onSelectObject, onUp
   }, [editingObjectId])
 
   const handleTimeChange = (e) => {
-    setCurrentTime(parseFloat(e.target.value))
+    onTimeChange?.(parseFloat(e.target.value))
   }
 
   const handleAddKeyframe = (property) => {
@@ -138,7 +137,7 @@ function Timeline({ scene, selectedObjectId, onAddKeyframe, onSelectObject, onUp
     }
 
     // Detect which row we're hovering over (vertical drag)
-    let hoverRootId = initialRootId
+    let hoverRootId = null
     for (const row of rows) {
       const el = rowRefs.current[row.rootId]
       if (!el) continue
@@ -148,6 +147,7 @@ function Timeline({ scene, selectedObjectId, onAddKeyframe, onSelectObject, onUp
         break
       }
     }
+    // If we didn't find a row under the cursor, treat it as "outside" (drop will detach).
 
     // If hovering another row, snap to the nearest clip end in that row
     let snapTargetId = null
@@ -190,6 +190,7 @@ function Timeline({ scene, selectedObjectId, onAddKeyframe, onSelectObject, onUp
     if (!dragState) return
 
     const { objectId, hoverRootId, initialRootId, snapTargetId, snapDelay } = dragState
+    const dragged = objectsById.get(objectId)
 
     // If we snapped onto another row, link as a transform and "stick" to that row.
     if (hoverRootId && hoverRootId !== initialRootId && snapTargetId && typeof snapDelay === 'number') {
@@ -199,15 +200,26 @@ function Timeline({ scene, selectedObjectId, onAddKeyframe, onSelectObject, onUp
         transformType: objectsById.get(objectId)?.transformType || 'Transform'
       })
     } else {
-      // If user dragged away from a transform chain, detach it (so it becomes its own row again).
-      const obj = objectsById.get(objectId)
-      if (obj?.transformFromId && hoverRootId === initialRootId) {
-        onUpdateObject?.(objectId, { transformFromId: null })
+      // Dropping outside the original row (or onto another row without snapping) should detach.
+      const droppedOutside = !hoverRootId
+      const droppedOtherRow = hoverRootId && hoverRootId !== initialRootId
+      if (droppedOutside || droppedOtherRow) {
+        // If it's a transform target, detaching is just clearing transformFromId.
+        if (dragged?.transformFromId) {
+          onUpdateObject?.(objectId, { transformFromId: null })
+        } else if (objectId === initialRootId) {
+          // Special case: dragging the root out should split the chain so the rest stays behind.
+          // Re-root any direct children so they no longer follow this root.
+          const children = (scene?.objects || []).filter(o => o.transformFromId === objectId)
+          children.forEach(child => {
+            onUpdateObject?.(child.id, { transformFromId: null })
+          })
+        }
       }
     }
 
     setDragState(null)
-  }, [dragState, objectsById, onUpdateObject])
+  }, [dragState, objectsById, onUpdateObject, scene?.objects])
 
   // Attach global mouse listeners when dragging
   React.useEffect(() => {
@@ -257,6 +269,18 @@ function Timeline({ scene, selectedObjectId, onAddKeyframe, onSelectObject, onUp
     // - function-like: color
     // fallback to type palette
     return obj.fill || obj.stroke || obj.color || getClipColor(obj.type)
+  }
+
+  const getRowDisplayName = (row) => {
+    const rootObj = objectsById.get(row.rootId) || row.objects[0]
+    if (!rootObj) return 'object'
+    if ((row.objects?.length || 0) <= 1) return getObjectDisplayName(rootObj)
+    const sorted = [...row.objects].sort((a, b) => (a.delay || 0) - (b.delay || 0))
+    const last = sorted[sorted.length - 1]
+    const rootName = getObjectDisplayName(rootObj)
+    const lastName = getObjectDisplayName(last)
+    const mid = Math.max(0, sorted.length - 2)
+    return mid > 0 ? `${rootName} → ${lastName} (+${mid})` : `${rootName} → ${lastName}`
   }
 
   const beginRename = (obj) => {
@@ -353,6 +377,7 @@ function Timeline({ scene, selectedObjectId, onAddKeyframe, onSelectObject, onUp
           const rowColor = rootObj ? getObjectColor(rootObj) : getClipColor(rootObj?.type)
           const isHoverRow = dragState?.hoverRootId === row.rootId && dragState?.hoverRootId !== dragState?.initialRootId
           const isEditingRowLabel = editingObjectId === row.rootId
+          const rowName = getRowDisplayName(row)
 
           return (
             <div
@@ -370,7 +395,7 @@ function Timeline({ scene, selectedObjectId, onAddKeyframe, onSelectObject, onUp
                   }}
                   title="Double-click to rename"
                 >
-                  {rootObj ? getObjectDisplayName(rootObj) : 'object'}
+                  {rowName}
                 </span>
               </div>
               <div

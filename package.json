@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "expr-eval": "^2.0.2",
+    "mathlive": "^0.105.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "uuid": "^9.0.1"

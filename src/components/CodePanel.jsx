@@ -71,9 +71,9 @@ function CodePanel({ code, logs, onCodeChange }) {
                 <button className="action-btn edit-btn" onClick={handleEdit}>
                   ✎ Edit
                 </button>
-                <button className="copy-btn" onClick={copyToClipboard}>
-                  {copied ? '✓ Copied' : '📋 Copy'}
-                </button>
+          <button className="copy-btn" onClick={copyToClipboard}>
+            {copied ? '✓ Copied' : '📋 Copy'}
+          </button>
               </>
             )}
           </div>
@@ -91,9 +91,9 @@ function CodePanel({ code, logs, onCodeChange }) {
               spellCheck={false}
             />
           ) : (
-            <pre className="code-block">
-              <code>{code || '# No code generated yet'}</code>
-            </pre>
+          <pre className="code-block">
+            <code>{code || '# No code generated yet'}</code>
+          </pre>
           )
         ) : (
           <pre className="logs-block">

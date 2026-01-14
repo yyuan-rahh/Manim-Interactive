@@ -55,6 +55,20 @@
   background: var(--accent-hover);
 }
 
+.toolbar-btn.danger {
+  border-color: rgba(233, 69, 96, 0.35);
+}
+
+.toolbar-btn.danger:hover:not(:disabled) {
+  background: rgba(233, 69, 96, 0.15);
+  border-color: rgba(233, 69, 96, 0.6);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btn-icon {
   font-size: 14px;
 }

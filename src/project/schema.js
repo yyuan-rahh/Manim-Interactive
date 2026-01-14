@@ -54,13 +54,42 @@ export function validateProject(data) {
   }
   
   // Ensure each scene has required fields
-  data.scenes = data.scenes.map(scene => ({
-    id: scene.id || crypto.randomUUID(),
-    name: scene.name || 'Untitled Scene',
-    duration: scene.duration || 5,
-    objects: Array.isArray(scene.objects) ? scene.objects : [],
-    animations: Array.isArray(scene.animations) ? scene.animations : []
-  }))
+  const allowedTypes = new Set([
+    'rectangle',
+    'triangle',
+    'circle',
+    'line',
+    'arc',
+    'arrow',
+    'dot',
+    'polygon',
+    'text',
+    'latex',
+    'axes',
+  ])
+
+  data.scenes = data.scenes.map(scene => {
+    const rawObjects = Array.isArray(scene.objects) ? scene.objects : []
+    const objects = rawObjects.filter(o => o && allowedTypes.has(o.type))
+    const idSet = new Set(objects.map(o => o.id).filter(Boolean))
+
+    // Drop dangling transform references if their source object was removed
+    const cleaned = objects.map(o => {
+      if (o.transformFromId && !idSet.has(o.transformFromId)) {
+        const { transformFromId, transformType, ...rest } = o
+        return rest
+      }
+      return o
+    })
+
+    return {
+      id: scene.id || crypto.randomUUID(),
+      name: scene.name || 'Untitled Scene',
+      duration: scene.duration || 5,
+      objects: cleaned,
+      animations: Array.isArray(scene.animations) ? scene.animations : []
+    }
+  })
   
   return data
 }

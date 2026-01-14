@@ -20,61 +20,46 @@ export function generateManimCode(project, activeSceneId) {
       lines.push('        pass  # Empty scene')
     } else {
       // Generate object creation code
+      // Note: objects that are transform targets get their own target variable, and are not "created" directly.
+      const idToSourceVar = new Map()
+      const idToTargetVar = new Map()
+      const idToIndex = new Map()
       scene.objects.forEach((obj, objIndex) => {
-        const varName = `obj_${objIndex}`
+        idToIndex.set(obj.id, objIndex)
+      })
+
+      scene.objects.forEach((obj, objIndex) => {
+        const isTransformTarget = !!obj.transformFromId
+        const varName = isTransformTarget ? `target_${objIndex}` : `obj_${objIndex}`
+
+        if (isTransformTarget) {
+          idToTargetVar.set(obj.id, varName)
+        } else {
+          idToSourceVar.set(obj.id, varName)
+        }
+
         const creation = generateObjectCreation(obj, varName, scene.objects)
         if (creation) {
-          lines.push(`        ${creation}`)
+          // Ensure multi-line object creations are properly indented
+          const creationLines = creation.split('\n')
+          creationLines.forEach((cl, i) => {
+            lines.push(`        ${cl}`)
+          })
         }
       })
       
       lines.push('')
       
-      // Generate animations based on keyframes
-      const animations = generateAnimations(scene.objects)
+      // Generate animations based on keyframes (now supports transforms)
+      const animations = generateAnimations(scene.objects, { idToSourceVar, idToTargetVar })
       if (animations.length > 0) {
         animations.forEach(anim => {
           lines.push(`        ${anim}`)
         })
       } else {
-        // Default: Animate objects with their entry animation settings
-        // Group by delay time
-        const byDelay = new Map()
-        scene.objects.forEach((obj, i) => {
-          const delay = obj.delay || 0
-          if (!byDelay.has(delay)) {
-            byDelay.set(delay, [])
-          }
-          byDelay.get(delay).push({ obj, varName: `obj_${i}` })
-        })
-        
-        const sortedDelays = [...byDelay.keys()].sort((a, b) => a - b)
-        let currentTime = 0
-        
-        sortedDelays.forEach(delay => {
-          // Wait if needed
-          if (delay > currentTime) {
-            lines.push(`        self.wait(${(delay - currentTime).toFixed(1)})`)
-            currentTime = delay
-          }
-          
-          const items = byDelay.get(delay)
-          const anims = items.map(({ obj, varName }) => {
-            const anim = obj.animationType && obj.animationType !== 'auto' 
-              ? obj.animationType 
-              : getDefaultAnimation(obj.type)
-            const runTime = obj.runTime || 1
-            return `${anim}(${varName}, run_time=${runTime})`
-          })
-          
-          lines.push(`        self.play(${anims.join(', ')})`)
-          
-          // Update current time based on longest animation
-          const maxRunTime = Math.max(...items.map(({ obj }) => obj.runTime || 1))
-          currentTime = delay + maxRunTime
-        })
-        
-        lines.push('        self.wait(1)')
+        // Default: Animate objects with their entry animation settings (supports transforms)
+        const defaultAnims = generateDefaultAnimations(scene.objects, { idToSourceVar, idToTargetVar })
+        defaultAnims.forEach(a => lines.push(`        ${a}`))
       }
     }
     
@@ -82,6 +67,78 @@ export function generateManimCode(project, activeSceneId) {
   })
   
   return lines.join('\n')
+}
+
+function generateDefaultAnimations(objects, { idToSourceVar, idToTargetVar }) {
+  const out = []
+
+  // Current variable that represents each logical object on screen (for chains)
+  const curVarById = new Map()
+  for (const [id, v] of idToSourceVar.entries()) curVarById.set(id, v)
+  for (const [id, v] of idToTargetVar.entries()) curVarById.set(id, v)
+
+  // Group by delay time
+  const byDelay = new Map()
+  objects.forEach((obj) => {
+    const delay = obj.delay || 0
+    if (!byDelay.has(delay)) byDelay.set(delay, [])
+    byDelay.get(delay).push(obj)
+  })
+
+  const sortedDelays = [...byDelay.keys()].sort((a, b) => a - b)
+  let currentTime = 0
+
+  sortedDelays.forEach(delay => {
+    if (delay > currentTime) {
+      out.push(`self.wait(${(delay - currentTime).toFixed(1)})`)
+      currentTime = delay
+    }
+
+    const items = byDelay.get(delay)
+    const creations = []
+    const transforms = []
+
+    items.forEach((obj) => {
+      const runTime = obj.runTime || 1
+
+      if (obj.transformFromId) {
+        const srcVar = curVarById.get(obj.transformFromId) || idToSourceVar.get(obj.transformFromId)
+        const tgtVar = idToTargetVar.get(obj.id) || curVarById.get(obj.id)
+        if (srcVar && tgtVar) {
+          const tType = obj.transformType || 'Transform'
+          transforms.push({ srcVar, tgtVar, tType, runTime, srcId: obj.transformFromId, objId: obj.id })
+        }
+      } else {
+        const varName = idToSourceVar.get(obj.id) || curVarById.get(obj.id)
+        const anim = obj.animationType && obj.animationType !== 'auto'
+          ? obj.animationType
+          : getDefaultAnimation(obj.type)
+        if (varName) {
+          creations.push({ expr: `${anim}(${varName}, run_time=${runTime})`, runTime })
+        }
+      }
+    })
+
+    if (creations.length > 0) {
+      out.push(`self.play(${creations.map(c => c.expr).join(', ')})`)
+      currentTime = delay + Math.max(...creations.map(c => c.runTime))
+    }
+
+    if (transforms.length > 0) {
+      out.push(`self.play(${transforms.map(t => `${t.tType}(${t.srcVar}, ${t.tgtVar}, run_time=${t.runTime})`).join(', ')})`)
+      // After transforms complete, advance time and update mapping so chains work
+      currentTime = Math.max(currentTime, delay + Math.max(...transforms.map(t => t.runTime)))
+      transforms.forEach(t => {
+        // After ReplacementTransform, the "current" visible object should be the target
+        out.push(`${t.srcVar} = ${t.tgtVar}`)
+        curVarById.set(t.srcId, t.tgtVar)
+        curVarById.set(t.objId, t.tgtVar)
+      })
+    }
+  })
+
+  out.push('self.wait(1)')
+  return out
 }
 
 /**
@@ -125,6 +182,20 @@ function generateObjectCreation(obj, varName, objects = []) {
       const stroke = obj.stroke ? colorToManim(obj.stroke) : 'YELLOW'
       return `${varName} = Arrow([${obj.x}, ${obj.y}, 0], [${obj.x2}, ${obj.y2}, 0], color=${stroke}, stroke_width=${obj.strokeWidth || 2})`
     }
+
+    case 'arc': {
+      const stroke = obj.stroke ? colorToManim(obj.stroke) : 'WHITE'
+      const strokeWidth = obj.strokeWidth || 3
+
+      // Non-circular curve: quadratic Bézier.
+      // We store `cx, cy` as the midpoint-on-curve at t=0.5 and derive the actual control point P1.
+      const x0 = obj.x, y0 = obj.y
+      const x2 = obj.x2, y2 = obj.y2
+      const x1 = 2 * obj.cx - 0.5 * (x0 + x2)
+      const y1 = 2 * obj.cy - 0.5 * (y0 + y2)
+
+      return `${varName} = QuadraticBezier([${x0}, ${y0}, 0], [${x1.toFixed(4)}, ${y1.toFixed(4)}, 0], [${x2}, ${y2}, 0]).set_stroke(color=${stroke}, width=${strokeWidth})`
+    }
     
     case 'dot': {
       const fill = obj.fill ? colorToManim(obj.fill) : 'WHITE'
@@ -142,7 +213,14 @@ function generateObjectCreation(obj, varName, objects = []) {
     case 'polygon': {
       const fill = obj.fill ? colorToManim(obj.fill) : 'None'
       const stroke = obj.stroke ? colorToManim(obj.stroke) : 'WHITE'
-      return `${varName} = RegularPolygon(n=${obj.sides}, radius=${obj.radius}, fill_color=${fill}, fill_opacity=${obj.fill ? obj.opacity : 0}, stroke_color=${stroke}, stroke_width=${obj.strokeWidth || 2}).move_to(${pos})`
+      const verts = obj.vertices || []
+      if (verts.length >= 3) {
+        const points = verts.map(v => `[${(obj.x + v.x).toFixed(2)}, ${(obj.y + v.y).toFixed(2)}, 0]`).join(', ')
+        return `${varName} = Polygon(${points}, fill_color=${fill}, fill_opacity=${obj.fill ? obj.opacity : 0}, stroke_color=${stroke}, stroke_width=${obj.strokeWidth || 2})`
+      } else {
+        // Fallback to regular polygon if no vertices
+        return `${varName} = RegularPolygon(n=${obj.sides || 5}, radius=${obj.radius || 1}, fill_color=${fill}, fill_opacity=${obj.fill ? obj.opacity : 0}, stroke_color=${stroke}, stroke_width=${obj.strokeWidth || 2}).move_to(${pos})`
+      }
     }
     
     case 'text': {
@@ -158,224 +236,28 @@ function generateObjectCreation(obj, varName, objects = []) {
       return `${varName} = MathTex(r"${latex}", color=${fill}).move_to(${pos})`
     }
     
-    case 'function': {
-      const formula = obj.formula || 'x^2'
-      const domain = obj.domain || { min: -5, max: 5 }
-      const color = obj.color || '#60a5fa'
+    case 'axes': {
+      const stroke = obj.stroke ? colorToManim(obj.stroke) : 'WHITE'
       const strokeWidth = obj.strokeWidth || 2
-      const manimColor = colorToManim(color)
-      
-      // Convert formula to Python lambda function
-      // Replace common math functions and operators
-      let pythonFormula = formula
-        .replace(/\^/g, '**')  // ^ to **
-        .replace(/sin\(/g, 'np.sin(')
-        .replace(/cos\(/g, 'np.cos(')
-        .replace(/tan\(/g, 'np.tan(')
-        .replace(/exp\(/g, 'np.exp(')
-        .replace(/log\(/g, 'np.log(')
-        .replace(/ln\(/g, 'np.log(')
-        .replace(/sqrt\(/g, 'np.sqrt(')
-        .replace(/abs\(/g, 'np.abs(')
-      
-      return `${varName} = FunctionGraph(
-            lambda x: ${pythonFormula},
-            x_range=[${domain.min}, ${domain.max}],
-            color=${manimColor},
-            stroke_width=${strokeWidth}
-        )`
-    }
-    
-    case 'tangent': {
-      // Find the referenced function
-      const functionObj = objects.find(o => o.id === obj.functionId)
-      if (!functionObj || functionObj.type !== 'function') {
-        return null
-      }
-      
-      const formula = functionObj.formula || 'x^2'
-      const pointX = obj.pointX || 0
-      const length = obj.length || 2
-      const color = obj.color || '#f59e0b'
-      const strokeWidth = obj.strokeWidth || 2
-      const manimColor = colorToManim(color)
-      
-      // Convert formula for Python
-      let pythonFormula = formula
-        .replace(/\^/g, '**')
-        .replace(/sin\(/g, 'np.sin(')
-        .replace(/cos\(/g, 'np.cos(')
-        .replace(/tan\(/g, 'np.tan(')
-        .replace(/exp\(/g, 'np.exp(')
-        .replace(/log\(/g, 'np.log(')
-        .replace(/ln\(/g, 'np.log(')
-        .replace(/sqrt\(/g, 'np.sqrt(')
-        .replace(/abs\(/g, 'np.abs(')
-      
-      // Use Manim's TangentLine if available, otherwise create Line manually
-      // For now, create a simple line - in production, use TangentLine from function graph
-      const h = 0.001
-      const x1 = pointX - h
-      const x2 = pointX + h
-      const y1 = pythonFormula.replace(/x/g, `(${x1})`)
-      const y2 = pythonFormula.replace(/x/g, `(${x2})`)
-      const slope = `((${y2}) - (${y1})) / (2 * ${h})`
-      const y0 = pythonFormula.replace(/x/g, `(${pointX})`)
-      const halfLen = length / 2
-      
-      return `${varName} = Line(
-            [${pointX} - ${halfLen}, ${y0} - ${slope} * ${halfLen}, 0],
-            [${pointX} + ${halfLen}, ${y0} + ${slope} * ${halfLen}, 0],
-            color=${manimColor},
-            stroke_width=${strokeWidth}
-        )`
-    }
-    
-    case 'riemann_sum': {
-      // Find the referenced function
-      const functionObj = objects.find(o => o.id === obj.functionId)
-      if (!functionObj || functionObj.type !== 'function') {
-        return null
-      }
-      
-      const formula = functionObj.formula || 'x^2'
-      const interval = obj.interval || { a: 0, b: 2 }
-      const n = obj.n || 4
-      const method = obj.method || 'left'
-      const fillColor = obj.fillColor || '#8b5cf6'
-      const strokeColor = obj.strokeColor || '#ffffff'
-      const strokeWidth = obj.strokeWidth || 1
-      
-      // Convert formula for Python
-      let pythonFormula = formula
-        .replace(/\^/g, '**')
-        .replace(/sin\(/g, 'np.sin(')
-        .replace(/cos\(/g, 'np.cos(')
-        .replace(/tan\(/g, 'np.tan(')
-        .replace(/exp\(/g, 'np.exp(')
-        .replace(/log\(/g, 'np.log(')
-        .replace(/ln\(/g, 'np.log(')
-        .replace(/sqrt\(/g, 'np.sqrt(')
-        .replace(/abs\(/g, 'np.abs(')
-      
-      const manimFill = colorToManim(fillColor)
-      const manimStroke = colorToManim(strokeColor)
-      
-      // Generate Riemann rectangles using VGroup
-      const width = (interval.b - interval.a) / n
-      const rects = []
-      
-      for (let i = 0; i < n; i++) {
-        const xLeft = interval.a + i * width
-        const xRight = xLeft + width
-        let x, height
-        
-        switch (method) {
-          case 'left':
-            x = xLeft
-            break
-          case 'right':
-            x = xRight
-            break
-          case 'midpoint':
-            x = (xLeft + xRight) / 2
-            break
-          default:
-            x = xLeft
-        }
-        
-        if (method === 'trapezoid') {
-          const hLeft = pythonFormula.replace(/x/g, `(${xLeft})`)
-          const hRight = pythonFormula.replace(/x/g, `(${xRight})`)
-          height = `((${hLeft}) + (${hRight})) / 2`
-        } else {
-          height = pythonFormula.replace(/x/g, `(${x})`)
-        }
-        
-        const y = height >= 0 ? 0 : height
-        const rectHeight = `abs(${height})`
-        
-        rects.push(`Rectangle(
-                width=${width},
-                height=${rectHeight},
-                fill_color=${manimFill},
-                fill_opacity=0.5,
-                stroke_color=${manimStroke},
-                stroke_width=${strokeWidth}
-            ).move_to([${xLeft + width/2}, ${y} + ${rectHeight}/2, 0])`)
-      }
-      
-      return `${varName} = VGroup(${rects.join(',\n                ')})`
-    }
-    
-    case 'accumulation': {
-      // Find the referenced function
-      const functionObj = objects.find(o => o.id === obj.functionId)
-      if (!functionObj || functionObj.type !== 'function') {
-        return null
-      }
-      
-      const formula = functionObj.formula || 'x^2'
-      const startPoint = obj.startPoint || 0
-      const currentX = obj.currentX || 2
-      const fillColor = obj.fillColor || '#60a5fa'
-      const manimColor = colorToManim(fillColor)
-      
-      // Convert formula for Python
-      let pythonFormula = formula
-        .replace(/\^/g, '**')
-        .replace(/sin\(/g, 'np.sin(')
-        .replace(/cos\(/g, 'np.cos(')
-        .replace(/tan\(/g, 'np.tan(')
-        .replace(/exp\(/g, 'np.exp(')
-        .replace(/log\(/g, 'np.log(')
-        .replace(/ln\(/g, 'np.log(')
-        .replace(/sqrt\(/g, 'np.sqrt(')
-        .replace(/abs\(/g, 'np.abs(')
-      
-      return `${varName} = AreaUnderCurve(
-            FunctionGraph(lambda x: ${pythonFormula}, x_range=[${startPoint}, ${currentX}]),
-            x_range=[${startPoint}, ${currentX}],
-            color=${manimColor},
-            fill_opacity=${obj.opacity ?? 0.5}
-        )`
-    }
-    
-    case 'taylor_series': {
-      // Find the referenced function
-      const functionObj = objects.find(o => o.id === obj.functionId)
-      if (!functionObj || functionObj.type !== 'function') {
-        return null
-      }
-      
-      const formula = functionObj.formula || 'x^2'
-      const center = obj.center || 0
-      const degree = obj.degree || 3
-      const domain = functionObj.domain || { min: -5, max: 5 }
-      const color = obj.color || '#f59e0b'
-      const strokeWidth = obj.strokeWidth || 2
-      const manimColor = colorToManim(color)
-      
-      // Convert formula for Python
-      let pythonFormula = formula
-        .replace(/\^/g, '**')
-        .replace(/sin\(/g, 'np.sin(')
-        .replace(/cos\(/g, 'np.cos(')
-        .replace(/tan\(/g, 'np.tan(')
-        .replace(/exp\(/g, 'np.exp(')
-        .replace(/log\(/g, 'np.log(')
-        .replace(/ln\(/g, 'np.log(')
-        .replace(/sqrt\(/g, 'np.sqrt(')
-        .replace(/abs\(/g, 'np.abs(')
-      
-      // Generate Taylor polynomial - calculate coefficients and create polynomial
-      // Note: This is a simplified version. For production, calculate coefficients numerically
-      return `${varName} = FunctionGraph(
-            lambda x: ${pythonFormula},
-            x_range=[${domain.min}, ${domain.max}],
-            color=${manimColor},
-            stroke_width=${strokeWidth}
-        )  # Taylor series approximation of degree ${degree} at ${center}`
+      const xMin = obj.xRange?.min ?? -5
+      const xMax = obj.xRange?.max ?? 5
+      const xStep = obj.xRange?.step ?? 1
+      const yMin = obj.yRange?.min ?? -3
+      const yMax = obj.yRange?.max ?? 3
+      const yStep = obj.yRange?.step ?? 1
+      const xLen = obj.xLength ?? 8
+      const yLen = obj.yLength ?? 4
+      const includeTicks = obj.showTicks !== false
+
+      return `${varName} = Axes(
+            x_range=[${xMin}, ${xMax}, ${xStep}],
+            y_range=[${yMin}, ${yMax}, ${yStep}],
+            x_length=${xLen},
+            y_length=${yLen},
+            axis_config={"color": ${stroke}, "stroke_width": ${strokeWidth}},
+            tips=False
+        )
+        ${varName}.shift(np.array(${pos}) - ${varName}.c2p(0, 0))`
     }
     
     default:
@@ -386,21 +268,22 @@ function generateObjectCreation(obj, varName, objects = []) {
 /**
  * Generate animations from keyframes
  */
-function generateAnimations(objects) {
+function generateAnimations(objects, { idToSourceVar, idToTargetVar }) {
   const animations = []
+
+  // Current variable that represents each logical object on screen (for chains)
+  const curVarById = new Map()
+  for (const [id, v] of idToSourceVar.entries()) curVarById.set(id, v)
+  for (const [id, v] of idToTargetVar.entries()) curVarById.set(id, v)
   
   // Group keyframes by time
   const timeMap = new Map()
   
-  objects.forEach((obj, objIndex) => {
-    const varName = `obj_${objIndex}`
-    
+  objects.forEach((obj) => {
     if (obj.keyframes && obj.keyframes.length > 0) {
       obj.keyframes.forEach(kf => {
-        if (!timeMap.has(kf.time)) {
-          timeMap.set(kf.time, [])
-        }
-        timeMap.get(kf.time).push({ varName, ...kf })
+        if (!timeMap.has(kf.time)) timeMap.set(kf.time, [])
+        timeMap.get(kf.time).push({ objectId: obj.id, ...kf })
       })
     }
   })
@@ -411,40 +294,60 @@ function generateAnimations(objects) {
   // Generate animation calls
   let currentTime = 0
   
-  // Create objects respecting their delay and runTime
-  // Group by delay time
+  // Create objects respecting their delay and runTime (supports transforms)
   const byDelay = new Map()
-  objects.forEach((obj, i) => {
+  objects.forEach((obj) => {
     const delay = obj.delay || 0
-    if (!byDelay.has(delay)) {
-      byDelay.set(delay, [])
-    }
-    byDelay.get(delay).push({ obj, varName: `obj_${i}` })
+    if (!byDelay.has(delay)) byDelay.set(delay, [])
+    byDelay.get(delay).push(obj)
   })
   
   const sortedDelays = [...byDelay.keys()].sort((a, b) => a - b)
   
     sortedDelays.forEach(delay => {
-      // Wait if needed
       if (delay > currentTime) {
         animations.push(`self.wait(${(delay - currentTime).toFixed(1)})`)
         currentTime = delay
       }
       
       const items = byDelay.get(delay)
-      const anims = items.map(({ obj, varName }) => {
+    const creations = []
+    const transforms = []
+
+    items.forEach((obj) => {
+      const runTime = obj.runTime || 1
+      if (obj.transformFromId) {
+        const srcVar = curVarById.get(obj.transformFromId) || idToSourceVar.get(obj.transformFromId)
+        const tgtVar = idToTargetVar.get(obj.id) || curVarById.get(obj.id)
+        if (srcVar && tgtVar) {
+          const tType = obj.transformType || 'Transform'
+          transforms.push({ srcVar, tgtVar, tType, runTime, srcId: obj.transformFromId, objId: obj.id })
+        }
+      } else {
+        const varName = idToSourceVar.get(obj.id) || curVarById.get(obj.id)
         const anim = obj.animationType && obj.animationType !== 'auto' 
           ? obj.animationType 
           : getDefaultAnimation(obj.type)
-        const runTime = obj.runTime || 1
-        return `${anim}(${varName}, run_time=${runTime})`
+        if (varName) {
+          creations.push({ expr: `${anim}(${varName}, run_time=${runTime})`, runTime })
+        }
+      }
+    })
+
+    if (creations.length > 0) {
+      animations.push(`self.play(${creations.map(c => c.expr).join(', ')})`)
+      currentTime = delay + Math.max(...creations.map(c => c.runTime))
+    }
+
+    if (transforms.length > 0) {
+      animations.push(`self.play(${transforms.map(t => `${t.tType}(${t.srcVar}, ${t.tgtVar}, run_time=${t.runTime})`).join(', ')})`)
+      currentTime = Math.max(currentTime, delay + Math.max(...transforms.map(t => t.runTime)))
+      transforms.forEach(t => {
+        animations.push(`${t.srcVar} = ${t.tgtVar}`)
+        curVarById.set(t.srcId, t.tgtVar)
+        curVarById.set(t.objId, t.tgtVar)
       })
-      
-      animations.push(`self.play(${anims.join(', ')})`)
-      
-      // Update current time based on longest animation
-      const maxRunTime = Math.max(...items.map(({ obj }) => obj.runTime || 1))
-      currentTime = delay + maxRunTime
+    }
     })
   
   // Now handle keyframes
@@ -457,17 +360,18 @@ function generateAnimations(objects) {
     }
     
     // Group by variable for combined transforms
-    const byVar = new Map()
+    const byObj = new Map()
     keyframes.forEach(kf => {
-      if (!byVar.has(kf.varName)) {
-        byVar.set(kf.varName, [])
-      }
-      byVar.get(kf.varName).push(kf)
+      if (!byObj.has(kf.objectId)) byObj.set(kf.objectId, [])
+      byObj.get(kf.objectId).push(kf)
     })
     
     // Generate animations for this time
     const anims = []
-    byVar.forEach((kfs, varName) => {
+    byObj.forEach((kfs, objectId) => {
+      const varName = curVarById.get(objectId) || idToSourceVar.get(objectId) || idToTargetVar.get(objectId)
+      if (!varName) return
+
       kfs.forEach(kf => {
         switch (kf.property) {
           case 'x':
@@ -521,12 +425,6 @@ function getDefaultAnimation(type) {
     case 'polygon':
     case 'triangle':
       return 'DrawBorderThenFill'
-    case 'function':
-    case 'tangent':
-    case 'riemann_sum':
-    case 'accumulation':
-    case 'taylor_series':
-      return 'Create'
     default:
       return 'Create'
   }

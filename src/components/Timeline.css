@@ -157,6 +157,10 @@
   background: rgba(233, 69, 96, 0.1);
 }
 
+.timeline-track.hover-target {
+  background: rgba(96, 165, 250, 0.10);
+}
+
 .track-label {
   width: 80px;
   font-size: 11px;
@@ -168,6 +172,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.track-name {
+  cursor: text;
+}
+
+.track-name:hover {
+  color: var(--text-primary);
 }
 
 .track-icon {
@@ -213,6 +225,14 @@
   z-index: 10;
 }
 
+.timeline-clip.selected {
+  border-color: rgba(255, 255, 255, 0.85) !important;
+}
+
+.timeline-clip.snap-source {
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.75), 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
 .timeline-track.selected .timeline-clip {
   border-color: rgba(255, 255, 255, 0.5);
 }
@@ -226,6 +246,24 @@
   text-overflow: ellipsis;
   padding: 0 16px;
   pointer-events: none;
+}
+
+.clip-name-input {
+  width: calc(100% - 16px);
+  margin: 0 8px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(0, 0, 0, 0.25);
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 11px;
+  padding: 0 6px;
+  outline: none;
+}
+
+.clip-name-input:focus {
+  border-color: rgba(255, 255, 255, 0.8);
+  background: rgba(0, 0, 0, 0.35);
 }
 
 /* Clip handles */

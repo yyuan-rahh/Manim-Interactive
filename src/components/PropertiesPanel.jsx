@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import './PropertiesPanel.css'
+import DesmosMathField from './DesmosMathField'
 
 // Controlled number input that allows editing
 function NumberInput({ value, onChange, step = 0.1, min, max, ...props }) {
@@ -72,6 +73,8 @@ function PropertiesPanel({
     handleChange(key, value)
   }
 
+  const transformCandidates = (scene?.objects || []).filter(o => o.id !== object.id)
+
   return (
     <div className="properties-panel">
       <div className="panel-header">
@@ -142,7 +145,7 @@ function PropertiesPanel({
           </div>
         )}
         
-        {(object.type === 'circle' || object.type === 'dot' || object.type === 'polygon') && (
+        {(object.type === 'circle' || object.type === 'dot') && (
           <div className="property-group">
             <label className="property-label">Radius</label>
             <NumberInput
@@ -152,14 +155,119 @@ function PropertiesPanel({
           </div>
         )}
         
+        {object.type === 'triangle' && (
+          <>
+            <div className="property-section-title">Vertices (relative to center)</div>
+            {(object.vertices || []).map((vertex, idx) => {
+              // Calculate side length to next vertex
+              const nextIdx = (idx + 1) % object.vertices.length
+              const nextVertex = object.vertices[nextIdx]
+              const sideLength = Math.sqrt(
+                Math.pow(nextVertex.x - vertex.x, 2) + 
+                Math.pow(nextVertex.y - vertex.y, 2)
+              ).toFixed(2)
+              
+              return (
+                <div key={idx}>
+                  <div className="property-row">
+                    <div className="property-group">
+                      <label className="property-label">V{idx + 1} X</label>
+                      <NumberInput
+                        value={vertex.x}
+                        onChange={(val) => {
+                          const newVerts = [...(object.vertices || [])]
+                          newVerts[idx] = { ...newVerts[idx], x: val }
+                          handleChange('vertices', newVerts)
+                        }}
+                      />
+                    </div>
+                    <div className="property-group">
+                      <label className="property-label">V{idx + 1} Y</label>
+                      <NumberInput
+                        value={vertex.y}
+                        onChange={(val) => {
+                          const newVerts = [...(object.vertices || [])]
+                          newVerts[idx] = { ...newVerts[idx], y: val }
+                          handleChange('vertices', newVerts)
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="property-info">
+                    Side {idx + 1}-{nextIdx + 1}: {sideLength} units
+                  </div>
+                </div>
+              )
+            })}
+          </>
+        )}
+        
         {object.type === 'polygon' && (
-          <div className="property-group">
-            <label className="property-label">Sides</label>
-            <NumberInput
-              value={object.sides}
-              onChange={(val) => handleNumberChange('sides', Math.round(val))}
-            />
-          </div>
+          <>
+            <div className="property-group">
+              <label className="property-label">Sides</label>
+              <NumberInput
+                value={object.sides || (object.vertices?.length || 5)}
+                onChange={(val) => {
+                  const numSides = Math.max(3, Math.round(val))
+                  // Generate new regular polygon vertices
+                  const radius = object.radius || 1
+                  const newVerts = []
+                  for (let i = 0; i < numSides; i++) {
+                    const angle = (i / numSides) * Math.PI * 2 - Math.PI / 2
+                    newVerts.push({
+                      x: parseFloat((Math.cos(angle) * radius).toFixed(2)),
+                      y: parseFloat((Math.sin(angle) * radius).toFixed(2))
+                    })
+                  }
+                  handleChange('vertices', newVerts)
+                  handleChange('sides', numSides)
+                }}
+              />
+            </div>
+            <div className="property-section-title">Vertices (relative to center)</div>
+            {(object.vertices || []).map((vertex, idx) => {
+              // Calculate side length to next vertex
+              const nextIdx = (idx + 1) % object.vertices.length
+              const nextVertex = object.vertices[nextIdx]
+              const sideLength = Math.sqrt(
+                Math.pow(nextVertex.x - vertex.x, 2) + 
+                Math.pow(nextVertex.y - vertex.y, 2)
+              ).toFixed(2)
+              
+              return (
+                <div key={idx}>
+                  <div className="property-row">
+                    <div className="property-group">
+                      <label className="property-label">V{idx + 1} X</label>
+                      <NumberInput
+                        value={vertex.x}
+                        onChange={(val) => {
+                          const newVerts = [...(object.vertices || [])]
+                          newVerts[idx] = { ...newVerts[idx], x: val }
+                          handleChange('vertices', newVerts)
+                        }}
+                      />
+                    </div>
+                    <div className="property-group">
+                      <label className="property-label">V{idx + 1} Y</label>
+                      <NumberInput
+                        value={vertex.y}
+                        onChange={(val) => {
+                          const newVerts = [...(object.vertices || [])]
+                          newVerts[idx] = { ...newVerts[idx], y: val }
+                          handleChange('vertices', newVerts)
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="property-info">
+                    Side {idx + 1}-{(nextIdx === 0 ? object.vertices.length : nextIdx + 1)}: {sideLength} units
+                  </div>
+                </div>
+              )
+            })}
+          </>
         )}
         
         {(object.type === 'line' || object.type === 'arrow') && (
@@ -179,6 +287,32 @@ function PropertiesPanel({
               />
             </div>
           </div>
+        )}
+
+        {object.type === 'arc' && (
+          <>
+            <div className="property-section-title">Arc</div>
+            <div className="property-row">
+              <div className="property-group">
+                <label className="property-label">End X</label>
+                <NumberInput value={object.x2} onChange={(val) => handleNumberChange('x2', val)} />
+              </div>
+              <div className="property-group">
+                <label className="property-label">End Y</label>
+                <NumberInput value={object.y2} onChange={(val) => handleNumberChange('y2', val)} />
+              </div>
+            </div>
+            <div className="property-row">
+              <div className="property-group">
+                <label className="property-label">Control X</label>
+                <NumberInput value={object.cx} onChange={(val) => handleNumberChange('cx', val)} />
+              </div>
+              <div className="property-group">
+                <label className="property-label">Control Y</label>
+                <NumberInput value={object.cy} onChange={(val) => handleNumberChange('cy', val)} />
+              </div>
+            </div>
+          </>
         )}
         
         {object.type === 'text' && (
@@ -204,334 +338,141 @@ function PropertiesPanel({
         {object.type === 'latex' && (
           <div className="property-group">
             <label className="property-label">LaTeX</label>
-            <input
-              type="text"
+            <DesmosMathField
               value={object.latex || ''}
-              onChange={(e) => handleChange('latex', e.target.value)}
-              placeholder="\frac{a}{b}"
+              onChange={(latex) => handleChange('latex', latex)}
+              placeholder="Type LaTeX…"
             />
           </div>
         )}
-        
-        {object.type === 'function' && (
+
+        {object.type === 'axes' && (
           <>
-            <div className="property-group">
-              <label className="property-label">Formula</label>
-              <input
-                type="text"
-                value={object.formula || 'x^2'}
-                onChange={(e) => handleChange('formula', e.target.value)}
-                placeholder="x^2, sin(x), x^3 - 2*x + 1"
-              />
+            <div className="property-section-title">Axes</div>
+            <div className="property-row">
+              <div className="property-group">
+                <label className="property-label">X Length</label>
+                <NumberInput value={object.xLength || 8} onChange={(val) => handleNumberChange('xLength', Math.max(0.5, val))} />
+              </div>
+              <div className="property-group">
+                <label className="property-label">Y Length</label>
+                <NumberInput value={object.yLength || 4} onChange={(val) => handleNumberChange('yLength', Math.max(0.5, val))} />
+              </div>
             </div>
             <div className="property-row">
               <div className="property-group">
-                <label className="property-label">Domain Min</label>
+                <label className="property-label">X Min</label>
                 <NumberInput
-                  value={object.domain?.min ?? -5}
-                  onChange={(val) => handleChange('domain', { 
-                    ...object.domain, 
-                    min: val,
-                    max: object.domain?.max ?? 5
-                  })}
+                  value={object.xRange?.min ?? -5}
+                  onChange={(val) => handleChange('xRange', { ...object.xRange, min: val, max: object.xRange?.max ?? 5, step: object.xRange?.step ?? 1 })}
                 />
               </div>
               <div className="property-group">
-                <label className="property-label">Domain Max</label>
+                <label className="property-label">X Max</label>
                 <NumberInput
-                  value={object.domain?.max ?? 5}
-                  onChange={(val) => handleChange('domain', { 
-                    ...object.domain, 
-                    min: object.domain?.min ?? -5,
-                    max: val
-                  })}
+                  value={object.xRange?.max ?? 5}
+                  onChange={(val) => handleChange('xRange', { ...object.xRange, min: object.xRange?.min ?? -5, max: val, step: object.xRange?.step ?? 1 })}
                 />
               </div>
-            </div>
-            <div className="property-group">
-              <label className="property-label">Color</label>
-              <input
-                type="color"
-                value={object.color || '#60a5fa'}
-                onChange={(e) => handleChange('color', e.target.value)}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">Stroke Width</label>
-              <NumberInput
-                value={object.strokeWidth || 2}
-                onChange={(val) => handleNumberChange('strokeWidth', val)}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">
-                <input
-                  type="checkbox"
-                  checked={object.showDerivative || false}
-                  onChange={(e) => handleChange('showDerivative', e.target.checked)}
-                />
-                Show Derivative (f')
-              </label>
-            </div>
-            <div className="property-group">
-              <label className="property-label">
-                <input
-                  type="checkbox"
-                  checked={object.showSecondDerivative || false}
-                  onChange={(e) => handleChange('showSecondDerivative', e.target.checked)}
-                />
-                Show Second Derivative (f'')
-              </label>
-            </div>
-          </>
-        )}
-        
-        {object.type === 'tangent' && (
-          <>
-            <div className="property-group">
-              <label className="property-label">Function</label>
-              <select
-                value={object.functionId || ''}
-                onChange={(e) => handleChange('functionId', e.target.value || null)}
-                className="animation-select"
-              >
-                <option value="">Select a function...</option>
-                {scene?.objects
-                  ?.filter(o => o.type === 'function')
-                  .map(func => (
-                    <option key={func.id} value={func.id}>
-                      {func.formula || 'f(x)'}
-                    </option>
-                  ))}
-              </select>
-            </div>
-            <div className="property-group">
-              <label className="property-label">Point X</label>
-              <NumberInput
-                value={object.pointX || 0}
-                onChange={(val) => handleNumberChange('pointX', val)}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">Length</label>
-              <NumberInput
-                value={object.length || 2}
-                onChange={(val) => handleNumberChange('length', val)}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">Color</label>
-              <input
-                type="color"
-                value={object.color || '#f59e0b'}
-                onChange={(e) => handleChange('color', e.target.value)}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">Stroke Width</label>
-              <NumberInput
-                value={object.strokeWidth || 2}
-                onChange={(val) => handleNumberChange('strokeWidth', val)}
-              />
-            </div>
-          </>
-        )}
-        
-        {object.type === 'riemann_sum' && (
-          <>
-            <div className="property-group">
-              <label className="property-label">Function</label>
-              <select
-                value={object.functionId || ''}
-                onChange={(e) => handleChange('functionId', e.target.value || null)}
-                className="animation-select"
-              >
-                <option value="">Select a function...</option>
-                {scene?.objects
-                  ?.filter(o => o.type === 'function')
-                  .map(func => (
-                    <option key={func.id} value={func.id}>
-                      {func.formula || 'f(x)'}
-                    </option>
-                  ))}
-              </select>
             </div>
             <div className="property-row">
               <div className="property-group">
-                <label className="property-label">Interval A</label>
+                <label className="property-label">Y Min</label>
                 <NumberInput
-                  value={object.interval?.a ?? 0}
-                  onChange={(val) => handleChange('interval', { 
-                    ...object.interval, 
-                    a: val,
-                    b: object.interval?.b ?? 2
-                  })}
+                  value={object.yRange?.min ?? -3}
+                  onChange={(val) => handleChange('yRange', { ...object.yRange, min: val, max: object.yRange?.max ?? 3, step: object.yRange?.step ?? 1 })}
                 />
               </div>
               <div className="property-group">
-                <label className="property-label">Interval B</label>
+                <label className="property-label">Y Max</label>
                 <NumberInput
-                  value={object.interval?.b ?? 2}
-                  onChange={(val) => handleChange('interval', { 
-                    ...object.interval, 
-                    a: object.interval?.a ?? 0,
-                    b: val
-                  })}
+                  value={object.yRange?.max ?? 3}
+                  onChange={(val) => handleChange('yRange', { ...object.yRange, min: object.yRange?.min ?? -3, max: val, step: object.yRange?.step ?? 1 })}
                 />
               </div>
-            </div>
-            <div className="property-group">
-              <label className="property-label">Number of Rectangles (n)</label>
-              <NumberInput
-                value={object.n || 4}
-                onChange={(val) => handleNumberChange('n', Math.max(1, Math.round(val)))}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">Method</label>
-              <select
-                value={object.method || 'left'}
-                onChange={(e) => handleChange('method', e.target.value)}
-                className="animation-select"
-              >
-                <option value="left">Left</option>
-                <option value="right">Right</option>
-                <option value="midpoint">Midpoint</option>
-                <option value="trapezoid">Trapezoid</option>
-              </select>
-            </div>
-            <div className="property-group">
-              <label className="property-label">Fill Color</label>
-              <input
-                type="color"
-                value={object.fillColor || '#8b5cf6'}
-                onChange={(e) => handleChange('fillColor', e.target.value)}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">Stroke Color</label>
-              <input
-                type="color"
-                value={object.strokeColor || '#ffffff'}
-                onChange={(e) => handleChange('strokeColor', e.target.value)}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">Stroke Width</label>
-              <NumberInput
-                value={object.strokeWidth || 1}
-                onChange={(val) => handleNumberChange('strokeWidth', val)}
-              />
-            </div>
-          </>
-        )}
-        
-        {object.type === 'accumulation' && (
-          <>
-            <div className="property-group">
-              <label className="property-label">Function</label>
-              <select
-                value={object.functionId || ''}
-                onChange={(e) => handleChange('functionId', e.target.value || null)}
-                className="animation-select"
-              >
-                <option value="">Select a function...</option>
-                {scene?.objects
-                  ?.filter(o => o.type === 'function')
-                  .map(func => (
-                    <option key={func.id} value={func.id}>
-                      {func.formula || 'f(x)'}
-                    </option>
-                  ))}
-              </select>
-            </div>
-            <div className="property-group">
-              <label className="property-label">Start Point (c)</label>
-              <NumberInput
-                value={object.startPoint || 0}
-                onChange={(val) => handleNumberChange('startPoint', val)}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">Current X</label>
-              <NumberInput
-                value={object.currentX || 2}
-                onChange={(val) => handleNumberChange('currentX', val)}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">Fill Color</label>
-              <input
-                type="color"
-                value={object.fillColor || '#60a5fa'}
-                onChange={(e) => handleChange('fillColor', e.target.value)}
-              />
-            </div>
-          </>
-        )}
-        
-        {object.type === 'taylor_series' && (
-          <>
-            <div className="property-group">
-              <label className="property-label">Function</label>
-              <select
-                value={object.functionId || ''}
-                onChange={(e) => handleChange('functionId', e.target.value || null)}
-                className="animation-select"
-              >
-                <option value="">Select a function...</option>
-                {scene?.objects
-                  ?.filter(o => o.type === 'function')
-                  .map(func => (
-                    <option key={func.id} value={func.id}>
-                      {func.formula || 'f(x)'}
-                    </option>
-                  ))}
-              </select>
-            </div>
-            <div className="property-group">
-              <label className="property-label">Center Point</label>
-              <NumberInput
-                value={object.center || 0}
-                onChange={(val) => handleNumberChange('center', val)}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">Degree</label>
-              <NumberInput
-                value={object.degree || 3}
-                onChange={(val) => handleNumberChange('degree', Math.max(0, Math.round(val)))}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">Color</label>
-              <input
-                type="color"
-                value={object.color || '#f59e0b'}
-                onChange={(e) => handleChange('color', e.target.value)}
-              />
-            </div>
-            <div className="property-group">
-              <label className="property-label">Stroke Width</label>
-              <NumberInput
-                value={object.strokeWidth || 2}
-                onChange={(val) => handleNumberChange('strokeWidth', val)}
-              />
             </div>
             <div className="property-group">
               <label className="property-label">
                 <input
                   type="checkbox"
-                  checked={object.showError || false}
-                  onChange={(e) => handleChange('showError', e.target.checked)}
+                  checked={object.showTicks ?? true}
+                  onChange={(e) => handleChange('showTicks', e.target.checked)}
                 />
-                Show Error Region
+                Show Ticks
               </label>
             </div>
           </>
         )}
         
+        {/* Transform linking (timeline snap) */}
+        {object.transformFromId && (
+          <>
+            <div className="property-section-title">Transform</div>
+
+            <div className="property-group">
+              <label className="property-label">From</label>
+              <select
+                value={object.transformFromId || ''}
+                onChange={(e) => handleChange('transformFromId', e.target.value || null)}
+                className="animation-select"
+              >
+                <option value="">(none)</option>
+                {transformCandidates.map(src => (
+                  <option key={src.id} value={src.id}>
+                    {src.type}{src.text ? `: ${src.text}` : src.latex ? `: ${src.latex}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="property-group">
+              <label className="property-label">Transform Type</label>
+              <select
+                value={object.transformType || 'Transform'}
+                onChange={(e) => handleChange('transformType', e.target.value)}
+                className="animation-select"
+              >
+                <option value="Transform">Transform</option>
+                <option value="ReplacementTransform">ReplacementTransform</option>
+                <option value="TransformMatchingShapes">TransformMatchingShapes</option>
+                <option value="FadeTransform">FadeTransform</option>
+              </select>
+              <div className="property-info">
+                Drag a clip onto another row and release near the end to link. This clip will then morph from the chosen source at its start time.
+              </div>
+            </div>
+
+            <div className="property-group">
+              <button
+                className="action-btn cancel-btn"
+                onClick={() => {
+                  onUpdateObject?.(object.id, { transformFromId: null, transformType: undefined })
+                }}
+              >
+                ✕ Unlink Transform
+              </button>
+            </div>
+          </>
+        )}
+
         <div className="property-section-title">Transform</div>
+        
+        <div className="property-row">
+          <div className="property-group">
+            <label className="property-label">Position X</label>
+            <NumberInput
+              value={object.x || 0}
+              onChange={(val) => handleNumberChange('x', val)}
+            />
+          </div>
+          <div className="property-group">
+            <label className="property-label">Position Y</label>
+            <NumberInput
+              value={object.y || 0}
+              onChange={(val) => handleNumberChange('y', val)}
+            />
+          </div>
+        </div>
         
         <div className="property-group">
           <label className="property-label">Rotation (°)</label>

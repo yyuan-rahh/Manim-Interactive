@@ -1,7 +1,7 @@
 import React from 'react'
 import './Toolbar.css'
 
-function Toolbar({ onSave, onLoad, onRender, isRendering }) {
+function Toolbar({ onSave, onLoad, onClearAll, canClearAll, onRender, isRendering }) {
   return (
     <div className="toolbar">
       <div className="toolbar-brand">
@@ -18,6 +18,16 @@ function Toolbar({ onSave, onLoad, onRender, isRendering }) {
         <button className="toolbar-btn" onClick={onSave} title="Save Project">
           <span className="btn-icon">💾</span>
           <span className="btn-label">Save</span>
+        </button>
+
+        <button
+          className="toolbar-btn danger"
+          onClick={onClearAll}
+          disabled={!canClearAll}
+          title="Clear all objects in the current scene"
+        >
+          <span className="btn-icon">🧹</span>
+          <span className="btn-label">Clear All</span>
         </button>
         
         <div className="toolbar-divider" />

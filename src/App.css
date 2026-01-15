@@ -18,11 +18,46 @@
   min-width: 0;
 }
 
+.canvas-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+
+.timeline-panel {
+  min-height: 140px;
+}
+
+.panel-resizer.horizontal {
+  height: 6px;
+  cursor: row-resize;
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-resizer.horizontal:hover {
+  background: rgba(233, 69, 96, 0.15);
+}
+
 .right-panel {
   width: 320px;
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
   border-left: 1px solid var(--border);
+}
+
+.properties-panel-wrapper {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.code-panel-wrapper {
+  min-height: 180px;
 }
 

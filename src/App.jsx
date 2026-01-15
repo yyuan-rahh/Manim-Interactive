@@ -7,7 +7,7 @@ import Timeline from './components/Timeline'
 import Toolbar from './components/Toolbar'
 import VideoPreview from './components/VideoPreview'
 import { createEmptyProject, createEmptyScene, validateProject } from './project/schema'
-import { generateManimCode } from './codegen/generator'
+import { generateManimCode, sanitizeClassName } from './codegen/generator'
 import './App.css'
 
 function App() {
@@ -15,6 +15,8 @@ function App() {
   const [activeSceneId, setActiveSceneId] = useState(project.scenes[0]?.id)
   const [selectedObjectId, setSelectedObjectId] = useState(null)
   const [currentTime, setCurrentTime] = useState(0)
+  const [timelineHeight, setTimelineHeight] = useState(220)
+  const [codePanelHeight, setCodePanelHeight] = useState(280)
   const [generatedCode, setGeneratedCode] = useState('')
   const [customCode, setCustomCode] = useState('')
   const [isCustomCodeSynced, setIsCustomCodeSynced] = useState(true)
@@ -33,6 +35,9 @@ function App() {
     isCustomCodeSynced,
   })
   const lastCommitRef = useRef({ key: null, time: 0 })
+  const centerPanelRef = useRef(null)
+  const rightPanelRef = useRef(null)
+  const resizeRef = useRef(null)
 
   const activeScene = project.scenes.find(s => s.id === activeSceneId)
   const selectedObject = activeScene?.objects.find(o => o.id === selectedObjectId)
@@ -46,6 +51,44 @@ function App() {
   useEffect(() => {
     stateRef.current = { project, activeSceneId, selectedObjectId, customCode, isCustomCodeSynced }
   }, [project, activeSceneId, selectedObjectId, customCode, isCustomCodeSynced])
+
+  const startResize = useCallback((type, e) => {
+    e.preventDefault()
+    resizeRef.current = {
+      type,
+      startY: e.clientY,
+      startTimelineHeight: timelineHeight,
+      startCodePanelHeight: codePanelHeight,
+    }
+
+    const onMove = (event) => {
+      if (!resizeRef.current) return
+      const delta = event.clientY - resizeRef.current.startY
+      if (resizeRef.current.type === 'timeline') {
+        const container = centerPanelRef.current?.getBoundingClientRect()
+        const min = 140
+        const max = container ? container.height - 180 : 500
+        // Drag down (positive delta) = bigger timeline
+        const next = Math.max(min, Math.min(max, resizeRef.current.startTimelineHeight - delta))
+        setTimelineHeight(next)
+      } else if (resizeRef.current.type === 'code') {
+        const container = rightPanelRef.current?.getBoundingClientRect()
+        const min = 180
+        const max = container ? container.height - 160 : 600
+        const next = Math.max(min, Math.min(max, resizeRef.current.startCodePanelHeight - delta))
+        setCodePanelHeight(next)
+      }
+    }
+
+    const onUp = () => {
+      resizeRef.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [timelineHeight, codePanelHeight])
 
   const isEditableTarget = (el) => {
     if (!el) return false
@@ -104,10 +147,11 @@ function App() {
   useEffect(() => {
     const code = generateManimCode(project, activeSceneId)
     setGeneratedCode(code)
-    if (isCustomCodeSynced) {
-      setCustomCode(code)
-    }
-  }, [project, activeSceneId, isCustomCodeSynced])
+    // Always keep customCode synced with generated code
+    // This ensures the code display matches what will be rendered
+    setCustomCode(code)
+    setIsCustomCodeSynced(true)
+  }, [project, activeSceneId])
 
   // Listen for render logs
   useEffect(() => {
@@ -404,8 +448,9 @@ function App() {
     setRenderLogs('')
     setVideoData(null)
     
-    const sceneName = activeScene.name.replace(/[^a-zA-Z0-9]/g, '_')
-    const codeToRender = customCode || generatedCode
+    const sceneName = sanitizeClassName(activeScene.name)
+    // Always use the generated code that matches the current canvas state
+    const codeToRender = generatedCode
     const result = await window.electronAPI.renderManim({
       pythonCode: codeToRender,
       sceneName,
@@ -506,46 +551,66 @@ function App() {
           onReorderScenes={reorderScenes}
         />
         
-        <div className="center-panel">
-          <Canvas
-            scene={activeScene}
-            currentTime={currentTime}
-            selectedObjectId={selectedObjectId}
-            onSelectObject={setSelectedObjectId}
-            onUpdateObject={updateObject}
-            onAddObject={addObject}
-            onDuplicateObject={duplicateObject}
-            onDeleteObject={deleteObject}
+        <div className="center-panel" ref={centerPanelRef}>
+          <div className="canvas-panel">
+            <Canvas
+              scene={activeScene}
+              currentTime={currentTime}
+              selectedObjectId={selectedObjectId}
+              onSelectObject={setSelectedObjectId}
+              onUpdateObject={updateObject}
+              onAddObject={addObject}
+              onDuplicateObject={duplicateObject}
+              onDeleteObject={deleteObject}
+            />
+          </div>
+
+          <div
+            className="panel-resizer horizontal"
+            onMouseDown={(e) => startResize('timeline', e)}
+            title="Drag to resize timeline"
           />
-          
-          <Timeline
-            scene={activeScene}
-            selectedObjectId={selectedObjectId}
-            currentTime={currentTime}
-            onTimeChange={setCurrentTime}
-            onAddKeyframe={addKeyframe}
-            onSelectObject={setSelectedObjectId}
-            onUpdateObject={updateObject}
-          />
+
+          <div className="timeline-panel" style={{ height: timelineHeight }}>
+            <Timeline
+              scene={activeScene}
+              selectedObjectId={selectedObjectId}
+              currentTime={currentTime}
+              onTimeChange={setCurrentTime}
+              onAddKeyframe={addKeyframe}
+              onSelectObject={setSelectedObjectId}
+              onUpdateObject={updateObject}
+            />
+          </div>
         </div>
         
-        <div className="right-panel">
-          <PropertiesPanel
-            object={selectedObject}
-            onUpdateObject={updateObject}
-            onDeleteObject={deleteObject}
-            onBringForward={bringForward}
-            onSendBackward={sendBackward}
-            onBringToFront={bringToFront}
-            onSendToBack={sendToBack}
-            scene={activeScene}
+        <div className="right-panel" ref={rightPanelRef}>
+          <div className="properties-panel-wrapper">
+            <PropertiesPanel
+              object={selectedObject}
+              onUpdateObject={updateObject}
+              onDeleteObject={deleteObject}
+              onBringForward={bringForward}
+              onSendBackward={sendBackward}
+              onBringToFront={bringToFront}
+              onSendToBack={sendToBack}
+              scene={activeScene}
+            />
+          </div>
+
+          <div
+            className="panel-resizer horizontal"
+            onMouseDown={(e) => startResize('code', e)}
+            title="Drag to resize code panel"
           />
-          
-          <CodePanel
-            code={customCode || generatedCode}
-            logs={renderLogs}
-            onCodeChange={handleCodeChange}
-          />
+
+          <div className="code-panel-wrapper" style={{ height: codePanelHeight }}>
+            <CodePanel
+              code={customCode || generatedCode}
+              logs={renderLogs}
+              onCodeChange={handleCodeChange}
+            />
+          </div>
         </div>
       </div>
       
@@ -614,7 +679,7 @@ function createObject(type) {
     case 'dot':
       return { ...baseObject, radius: 0.1, fill: '#ffffff' }
     case 'text':
-      return { ...baseObject, text: 'Text', fontSize: 48, fill: '#ffffff' }
+      return { ...baseObject, text: 'Text', fontSize: 48, fill: '#ffffff', width: 2, height: 0.8 }
     case 'latex':
       return { ...baseObject, latex: '\\frac{a}{b}', fill: '#ffffff' }
     case 'axes':

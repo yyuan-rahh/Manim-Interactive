@@ -26,8 +26,8 @@ const MANIM_HEIGHT = 8
 const HANDLE_SIZE = 10
 
 // Snapping constants
-const SNAP_THRESHOLD = 0.15 // Manim units - grid/axis snapping
-const SHAPE_SNAP_THRESHOLD = 0.15 // Manim units - snapping to other shapes' vertices/edges
+const SNAP_THRESHOLD = 0.08 // Manim units - grid/axis snapping (reduced from 0.15)
+const SHAPE_SNAP_THRESHOLD = 0.08 // Manim units - snapping to other shapes' vertices/edges (reduced from 0.15)
 const GRID_SNAP = 0.5 // Snap to half-unit grid
 const ANGLE_SNAP = 45 // Degrees for angle snapping
 
@@ -196,7 +196,10 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
   // Legacy dropdown menu state (advanced math features removed)
   const [openPaletteMenu, setOpenPaletteMenu] = useState(null)
   const [contextMenu, setContextMenu] = useState({ open: false, x: 0, y: 0, objectId: null })
+  const [editingVertex, setEditingVertex] = useState({ objectId: null, vertexIndex: null, label: '', isCorner: false })
+  const vertexInputRef = useRef(null)
   const latexLayerRef = useRef(null)
+  const rotateStartRef = useRef(null)
 
   // Convert Manim coords to canvas coords
   const manimToCanvas = useCallback((mx, my) => {
@@ -215,6 +218,37 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
   // Scale factor for sizes (Manim units to canvas pixels)
   const scaleX = canvasSize.width / MANIM_WIDTH
   const scaleY = canvasSize.height / MANIM_HEIGHT
+
+  const getTextCorners = useCallback((obj) => {
+    const hw = (obj.width || 2) / 2
+    const hh = (obj.height || 0.8) / 2
+    const rad = (obj.rotation || 0) * Math.PI / 180
+    const cos = Math.cos(rad)
+    const sin = Math.sin(rad)
+    const local = [
+      { x: -hw, y: hh },  // NW
+      { x: hw, y: hh },   // NE
+      { x: -hw, y: -hh }, // SW
+      { x: hw, y: -hh },  // SE
+    ]
+    return local.map(p => ({
+      x: obj.x + p.x * cos - p.y * sin,
+      y: obj.y + p.x * sin + p.y * cos,
+    }))
+  }, [])
+
+  const getTextRotateHandle = useCallback((obj) => {
+    const hh = (obj.height || 0.8) / 2
+    const offset = 20 / scaleY
+    const rad = (obj.rotation || 0) * Math.PI / 180
+    const cos = Math.cos(rad)
+    const sin = Math.sin(rad)
+    const local = { x: 0, y: hh + offset }
+    return {
+      x: obj.x + local.x * cos - local.y * sin,
+      y: obj.y + local.x * sin + local.y * cos,
+    }
+  }, [scaleY])
 
   // Resize canvas to fit container while maintaining 16:9 aspect
   useEffect(() => {
@@ -476,7 +510,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       }
       case 'text': {
         ctx.globalAlpha = obj.opacity ?? 1
-        ctx.font = `${obj.fontSize || 48}px Arial`
+        ctx.font = `${obj.fontSize || 48}px "Latin Modern Roman", "Computer Modern", "Times New Roman", serif`
         ctx.fillStyle = obj.fill || '#ffffff'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
@@ -536,6 +570,112 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       }
     }
     
+    ctx.restore()
+    
+    // Draw vertex labels (always visible, not just when selected)
+    ctx.save()
+    const LABEL_OFFSET = 30 // pixels to offset label outside the shape
+    
+    if (obj.type === 'triangle') {
+      const verts = obj.vertices || []
+      // Calculate centroid
+      const centroid = verts.reduce(
+        (acc, v) => ({ x: acc.x + v.x, y: acc.y + v.y }),
+        { x: 0, y: 0 }
+      )
+      centroid.x /= verts.length || 1
+      centroid.y /= verts.length || 1
+      
+      verts.forEach((v) => {
+        if (v.label) {
+          const vManim = { x: obj.x + v.x, y: obj.y + v.y }
+          const cManim = { x: obj.x + centroid.x, y: obj.y + centroid.y }
+          
+          // Direction vector from centroid to vertex
+          const dx = vManim.x - cManim.x
+          const dy = vManim.y - cManim.y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          
+          if (dist > 0.01) {
+            // Normalize and extend outward
+            const scale = LABEL_OFFSET / scaleX // Convert pixels to Manim units
+            const labelX = vManim.x + (dx / dist) * scale
+            const labelY = vManim.y + (dy / dist) * scale
+            const labelPos = manimToCanvas(labelX, labelY)
+            
+            ctx.fillStyle = '#ffffff'
+            ctx.font = '18px "Latin Modern Roman", "Computer Modern", "Times New Roman", serif'
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(v.label, labelPos.x, labelPos.y)
+          }
+        }
+      })
+    } else if (obj.type === 'polygon') {
+      const verts = obj.vertices || []
+      // Calculate centroid
+      const centroid = verts.reduce(
+        (acc, v) => ({ x: acc.x + v.x, y: acc.y + v.y }),
+        { x: 0, y: 0 }
+      )
+      centroid.x /= verts.length || 1
+      centroid.y /= verts.length || 1
+      
+      verts.forEach((v) => {
+        if (v.label) {
+          const vManim = { x: obj.x + v.x, y: obj.y + v.y }
+          const cManim = { x: obj.x + centroid.x, y: obj.y + centroid.y }
+          
+          // Direction vector from centroid to vertex
+          const dx = vManim.x - cManim.x
+          const dy = vManim.y - cManim.y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          
+          if (dist > 0.01) {
+            // Normalize and extend outward
+            const scale = LABEL_OFFSET / scaleX
+            const labelX = vManim.x + (dx / dist) * scale
+            const labelY = vManim.y + (dy / dist) * scale
+            const labelPos = manimToCanvas(labelX, labelY)
+            
+            ctx.fillStyle = '#ffffff'
+            ctx.font = '18px "Latin Modern Roman", "Computer Modern", "Times New Roman", serif'
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(v.label, labelPos.x, labelPos.y)
+          }
+        }
+      })
+    } else if (obj.type === 'rectangle') {
+      const corners = [
+        { x: obj.x - obj.width/2, y: obj.y + obj.height/2, label: obj.cornerLabels?.[0] },
+        { x: obj.x + obj.width/2, y: obj.y + obj.height/2, label: obj.cornerLabels?.[1] },
+        { x: obj.x - obj.width/2, y: obj.y - obj.height/2, label: obj.cornerLabels?.[2] },
+        { x: obj.x + obj.width/2, y: obj.y - obj.height/2, label: obj.cornerLabels?.[3] },
+      ]
+      corners.forEach((c) => {
+        if (c.label) {
+          // Direction from rectangle center to corner
+          const dx = c.x - obj.x
+          const dy = c.y - obj.y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          
+          if (dist > 0.01) {
+            // Normalize and extend outward
+            const scale = LABEL_OFFSET / scaleX
+            const labelX = c.x + (dx / dist) * scale
+            const labelY = c.y + (dy / dist) * scale
+            const labelPos = manimToCanvas(labelX, labelY)
+            
+            ctx.fillStyle = '#ffffff'
+            ctx.font = '18px "Latin Modern Roman", "Computer Modern", "Times New Roman", serif'
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(c.label, labelPos.x, labelPos.y)
+          }
+        }
+      })
+    }
     ctx.restore()
     
     // Selection outline and handles
@@ -633,8 +773,16 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           // No pink dashed outline for these (they already have explicit edit handles).
           break
         }
+        case 'text': {
+          ctx.translate(pos.x, pos.y)
+          ctx.rotate(-obj.rotation * Math.PI / 180)
+          const w = (obj.width || 2) * scaleX
+          const h = (obj.height || 0.8) * scaleY
+          ctx.strokeRect(-w/2 - pad, -h/2 - pad, w + pad*2, h + pad*2)
+          break
+        }
         default: {
-          // Fallback to bounding box for text/latex
+          // Fallback to bounding box for latex
           ctx.translate(pos.x, pos.y)
           ctx.rotate(-obj.rotation * Math.PI / 180)
       const bounds = getObjectBounds(obj)
@@ -672,12 +820,12 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         // Draw corner handles at actual corners
         ctx.fillStyle = '#4ade80'
         const corners = [
-          { x: obj.x - obj.width/2, y: obj.y + obj.height/2 }, // NW
-          { x: obj.x + obj.width/2, y: obj.y + obj.height/2 }, // NE
-          { x: obj.x - obj.width/2, y: obj.y - obj.height/2 }, // SW
-          { x: obj.x + obj.width/2, y: obj.y - obj.height/2 }, // SE
+          { x: obj.x - obj.width/2, y: obj.y + obj.height/2, label: obj.cornerLabels?.[0] }, // NW
+          { x: obj.x + obj.width/2, y: obj.y + obj.height/2, label: obj.cornerLabels?.[1] }, // NE
+          { x: obj.x - obj.width/2, y: obj.y - obj.height/2, label: obj.cornerLabels?.[2] }, // SW
+          { x: obj.x + obj.width/2, y: obj.y - obj.height/2, label: obj.cornerLabels?.[3] }, // SE
         ]
-        corners.forEach(c => {
+        corners.forEach((c, i) => {
           const cPos = manimToCanvas(c.x, c.y)
           ctx.beginPath()
           ctx.arc(cPos.x, cPos.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
@@ -711,6 +859,22 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         ctx.fillStyle = '#e94560'
         ctx.beginPath()
         ctx.arc(ctrl.x, ctrl.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
+        ctx.fill()
+      } else if (obj.type === 'text') {
+        // Draw corner handles for text (like rectangles)
+        ctx.fillStyle = '#4ade80'
+        const corners = getTextCorners(obj)
+        corners.forEach(c => {
+          const cPos = manimToCanvas(c.x, c.y)
+          ctx.beginPath()
+          ctx.arc(cPos.x, cPos.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
+          ctx.fill()
+        })
+        const rot = getTextRotateHandle(obj)
+        const rPos = manimToCanvas(rot.x, rot.y)
+        ctx.fillStyle = '#e94560'
+        ctx.beginPath()
+        ctx.arc(rPos.x, rPos.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
         ctx.fill()
       } else if (obj.type === 'circle') {
         // Draw corner resize handles at bounding box corners for circles only
@@ -821,6 +985,13 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         const ys = pts.map(p => p.y)
         return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) }
       }
+      case 'text':
+        return {
+          minX: obj.x - (obj.width || 2) / 2,
+          maxX: obj.x + (obj.width || 2) / 2,
+          minY: obj.y - (obj.height || 0.8) / 2,
+          maxY: obj.y + (obj.height || 0.8) / 2
+        }
       case 'axes': {
         const xLen = obj.xLength || 8
         const yLen = obj.yLength || 4
@@ -958,9 +1129,22 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         const dY = pointToLineDistance(mx, my, obj.x, y1, obj.x, y2)
         return Math.min(dX, dY) <= 0.25
       }
-      case 'text':
+      case 'text': {
+        // Text uses width/height like rectangles
+        const halfW = (obj.width || 2) / 2
+        const halfH = (obj.height || 0.8) / 2
+        // Rotate point around text center
+        const cos = Math.cos(-obj.rotation * Math.PI / 180)
+        const sin = Math.sin(-obj.rotation * Math.PI / 180)
+        const dx = mx - obj.x
+        const dy = my - obj.y
+        const rotatedX = dx * cos - dy * sin
+        const rotatedY = dx * sin + dy * cos
+        return rotatedX >= -halfW && rotatedX <= halfW &&
+               rotatedY >= -halfH && rotatedY <= halfH
+      }
       case 'latex': {
-        // Use bounding box for text
+        // Use bounding box for latex
         const bounds = getObjectBounds(obj)
         return mx >= bounds.minX && mx <= bounds.maxX &&
                my >= bounds.minY && my <= bounds.maxY
@@ -1021,18 +1205,27 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       return null
     }
     
-    // For rectangles, check corner vertex handles
-    if (obj.type === 'rectangle') {
-      const corners = [
-        { id: 'corner-0', x: obj.x - obj.width/2, y: obj.y + obj.height/2 }, // NW
-        { id: 'corner-1', x: obj.x + obj.width/2, y: obj.y + obj.height/2 }, // NE
-        { id: 'corner-2', x: obj.x - obj.width/2, y: obj.y - obj.height/2 }, // SW
-        { id: 'corner-3', x: obj.x + obj.width/2, y: obj.y - obj.height/2 }, // SE
-      ]
+    // For rectangles and text, check corner vertex handles
+    if (obj.type === 'rectangle' || obj.type === 'text') {
+      const corners = obj.type === 'text'
+        ? getTextCorners(obj).map((c, i) => ({ id: `corner-${i}`, x: c.x, y: c.y }))
+        : [
+            { id: 'corner-0', x: obj.x - obj.width/2, y: obj.y + obj.height/2 }, // NW
+            { id: 'corner-1', x: obj.x + obj.width/2, y: obj.y + obj.height/2 }, // NE
+            { id: 'corner-2', x: obj.x - obj.width/2, y: obj.y - obj.height/2 }, // SW
+            { id: 'corner-3', x: obj.x + obj.width/2, y: obj.y - obj.height/2 }, // SE
+          ]
       for (const corner of corners) {
         const cPos = manimToCanvas(corner.x, corner.y)
         if (Math.hypot(canvasX - cPos.x, canvasY - cPos.y) < HANDLE_SIZE + 4) {
           return corner.id
+        }
+      }
+      if (obj.type === 'text') {
+        const rot = getTextRotateHandle(obj)
+        const rPos = manimToCanvas(rot.x, rot.y)
+        if (Math.hypot(canvasX - rPos.x, canvasY - rPos.y) < HANDLE_SIZE + 4) {
+          return 'rotate'
         }
       }
       return null
@@ -1178,6 +1371,39 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       const handleHit = hitTestHandle(x, y, selectedObj)
       
       if (handleHit) {
+        if (handleHit === 'rotate' && selectedObj?.type === 'text') {
+          const center = { x: selectedObj.x, y: selectedObj.y }
+          const mouse = canvasToManim(x, y)
+          const angle = Math.atan2(mouse.y - center.y, mouse.x - center.x)
+          rotateStartRef.current = {
+            angle,
+            rotation: selectedObj.rotation || 0,
+          }
+          setIsDragging(true)
+          setDragType('rotate')
+          setActiveHandle(handleHit)
+          return
+        }
+        // Double-click on vertex to edit label
+        if (e.detail === 2) {
+          if (handleHit.startsWith('vertex-')) {
+            const vertexIndex = parseInt(handleHit.split('-')[1])
+            const verts = selectedObj.vertices || []
+            const vertex = verts[vertexIndex]
+            if (vertex) {
+              setEditingVertex({ objectId: selectedObjectId, vertexIndex, label: vertex.label || '', isCorner: false })
+              setTimeout(() => vertexInputRef.current?.focus(), 0)
+              return
+            }
+          } else if (handleHit.startsWith('corner-')) {
+            const cornerIndex = parseInt(handleHit.split('-')[1])
+            const cornerLabels = selectedObj.cornerLabels || []
+            setEditingVertex({ objectId: selectedObjectId, vertexIndex: cornerIndex, label: cornerLabels[cornerIndex] || '', isCorner: true })
+            setTimeout(() => vertexInputRef.current?.focus(), 0)
+            return
+          }
+        }
+        
         setIsDragging(true)
         setDragType('resize')
         setActiveHandle(handleHit)
@@ -1194,6 +1420,10 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     if (hitId) {
       const obj = getVisibleObjectsAtTime(scene.objects, currentTime).find(o => o.id === hitId)
       if (obj) {
+        // Move object clip to current timeline time when clicked
+        if (typeof currentTime === 'number' && obj.delay !== currentTime) {
+          onUpdateObject?.(hitId, { delay: parseFloat(currentTime.toFixed(2)) })
+        }
         setIsDragging(true)
         setDragType('move')
         setActiveHandle(null)
@@ -1232,6 +1462,19 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     // Check if shift is held for angle snapping
     const shiftHeld = e.shiftKey
     
+    if (dragType === 'rotate') {
+      const obj = scene.objects.find(o => o.id === selectedObjectId)
+      if (!obj || !rotateStartRef.current) return
+      const rect = canvasRef.current.getBoundingClientRect()
+      const mouse = canvasToManim(e.clientX - rect.left, e.clientY - rect.top)
+      const center = { x: obj.x, y: obj.y }
+      const angle = Math.atan2(mouse.y - center.y, mouse.x - center.x)
+      const delta = (angle - rotateStartRef.current.angle) * 180 / Math.PI
+      const next = rotateStartRef.current.rotation + delta
+      onUpdateObject(selectedObjectId, { rotation: parseFloat(next.toFixed(2)) })
+      return
+    }
+
     if (dragType === 'move') {
       const obj = scene.objects.find(o => o.id === selectedObjectId)
       if (!obj) return
@@ -1334,8 +1577,8 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         return
       }
       
-      // Handle rectangle corner dragging
-      if (obj.type === 'rectangle' && activeHandle?.startsWith('corner-')) {
+      // Handle rectangle and text corner dragging
+      if ((obj.type === 'rectangle' || obj.type === 'text') && activeHandle?.startsWith('corner-')) {
         const cornerIndex = parseInt(activeHandle.split('-')[1])
         // Corners: 0=NW, 1=NE, 2=SW, 3=SE
         const MIN_W = 0.2
@@ -1380,12 +1623,25 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         const newX = (left + right) / 2
         const newY = (bottom + top) / 2
 
-        onUpdateObject(selectedObjectId, {
+        const updates = {
           width: parseFloat(newWidth.toFixed(2)),
           height: parseFloat(newHeight.toFixed(2)),
           x: parseFloat(newX.toFixed(2)),
           y: parseFloat(newY.toFixed(2)),
-        })
+        }
+
+        // For text objects, scale font size proportionally
+        if (obj.type === 'text') {
+          const widthScale = newWidth / (dragOffset.width || 2)
+          const heightScale = newHeight / (dragOffset.height || 0.8)
+          // Use average of width and height scaling for balanced scaling
+          const avgScale = (widthScale + heightScale) / 2
+          const initialFontSize = dragOffset.fontSize || 48
+          const newFontSize = Math.max(8, Math.round(initialFontSize * avgScale))
+          updates.fontSize = newFontSize
+        }
+
+        onUpdateObject(selectedObjectId, updates)
         return
       }
       
@@ -1462,6 +1718,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     setIsDragging(false)
     setDragType(null)
     setActiveHandle(null)
+    rotateStartRef.current = null
   }
 
   const handlePaletteClick = (type, event) => {
@@ -1469,6 +1726,18 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     setOpenPaletteMenu(null)
     onAddObject(type)
   }
+
+  const getTextRotateButtonPosition = useCallback((obj) => {
+    const center = manimToCanvas(obj.x, obj.y)
+    const heightPx = (obj.height || 0.8) * scaleY
+    const offset = heightPx / 2 + 20
+    const angle = -obj.rotation * Math.PI / 180
+    const dx = 0
+    const dy = -offset
+    const rx = dx * Math.cos(angle) - dy * Math.sin(angle)
+    const ry = dx * Math.sin(angle) + dy * Math.cos(angle)
+    return { x: center.x + rx, y: center.y + ry }
+  }, [manimToCanvas, scaleY])
 
   return (
     <div className="canvas-container" ref={containerRef}>
@@ -1515,6 +1784,32 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
             }}
           />
 
+          {(() => {
+            const obj = getVisibleObjectsAtTime(scene?.objects || [], currentTime)
+              .find(o => o.id === selectedObjectId && o.type === 'text')
+            if (!obj) return null
+            const pos = getTextRotateButtonPosition(obj)
+            return (
+              <button
+                className="text-rotate-btn"
+                style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
+                title="Rotate +15°"
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                }}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  const next = ((obj.rotation || 0) + 15) % 360
+                  onUpdateObject?.(obj.id, { rotation: next })
+                }}
+              >
+                ↻
+              </button>
+            )
+          })()}
+
           <div ref={latexLayerRef} className="latex-overlay-layer" aria-hidden="true">
             {latexObjects.map((obj) => {
               const p = manimToCanvas(obj.x, obj.y)
@@ -1550,7 +1845,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         </div>
       </div>
 
-      {contextMenu.open && (
+          {contextMenu.open && (
         <div
           className="canvas-context-menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}
@@ -1576,6 +1871,139 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           </button>
         </div>
       )}
+
+      {editingVertex.objectId && (() => {
+        const obj = scene?.objects?.find(o => o.id === editingVertex.objectId)
+        if (!obj) return null
+        
+        const LABEL_OFFSET = 30
+        let labelPos
+        
+        if (editingVertex.isCorner && obj.type === 'rectangle') {
+          const corners = [
+            { x: obj.x - obj.width/2, y: obj.y + obj.height/2 },
+            { x: obj.x + obj.width/2, y: obj.y + obj.height/2 },
+            { x: obj.x - obj.width/2, y: obj.y - obj.height/2 },
+            { x: obj.x + obj.width/2, y: obj.y - obj.height/2 },
+          ]
+          const corner = corners[editingVertex.vertexIndex]
+          if (!corner) return null
+          
+          // Direction from rectangle center to corner
+          const dx = corner.x - obj.x
+          const dy = corner.y - obj.y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          
+          if (dist > 0.01) {
+            const scale = LABEL_OFFSET / scaleX
+            const labelX = corner.x + (dx / dist) * scale
+            const labelY = corner.y + (dy / dist) * scale
+            labelPos = manimToCanvas(labelX, labelY)
+          } else {
+            labelPos = manimToCanvas(corner.x, corner.y)
+          }
+        } else if (obj.vertices?.[editingVertex.vertexIndex]) {
+          const vertex = obj.vertices[editingVertex.vertexIndex]
+          const vManim = { x: obj.x + vertex.x, y: obj.y + vertex.y }
+          
+          // Calculate centroid for direction
+          const verts = obj.vertices || []
+          const centroid = verts.reduce(
+            (acc, v) => ({ x: acc.x + v.x, y: acc.y + v.y }),
+            { x: 0, y: 0 }
+          )
+          centroid.x /= verts.length || 1
+          centroid.y /= verts.length || 1
+          const cManim = { x: obj.x + centroid.x, y: obj.y + centroid.y }
+          
+          // Direction vector from centroid to vertex
+          const dx = vManim.x - cManim.x
+          const dy = vManim.y - cManim.y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          
+          if (dist > 0.01) {
+            const scale = LABEL_OFFSET / scaleX
+            const labelX = vManim.x + (dx / dist) * scale
+            const labelY = vManim.y + (dy / dist) * scale
+            labelPos = manimToCanvas(labelX, labelY)
+          } else {
+            labelPos = manimToCanvas(vManim.x, vManim.y)
+          }
+        } else {
+          return null
+        }
+        
+        return (
+          <input
+            ref={vertexInputRef}
+            type="text"
+            value={editingVertex.label}
+            onChange={(e) => setEditingVertex({ ...editingVertex, label: e.target.value })}
+            onBlur={() => {
+              const obj = scene?.objects?.find(o => o.id === editingVertex.objectId)
+              if (!obj) {
+                setEditingVertex({ objectId: null, vertexIndex: null, label: '', isCorner: false })
+                return
+              }
+              
+              if (editingVertex.isCorner && obj.type === 'rectangle') {
+                const cornerLabels = [...(obj.cornerLabels || [])]
+                cornerLabels[editingVertex.vertexIndex] = editingVertex.label.trim() || undefined
+                onUpdateObject(editingVertex.objectId, { cornerLabels })
+              } else if (obj.vertices?.[editingVertex.vertexIndex]) {
+                const newVertices = [...obj.vertices]
+                newVertices[editingVertex.vertexIndex] = {
+                  ...newVertices[editingVertex.vertexIndex],
+                  label: editingVertex.label.trim() || undefined
+                }
+                onUpdateObject(editingVertex.objectId, { vertices: newVertices })
+              }
+              setEditingVertex({ objectId: null, vertexIndex: null, label: '', isCorner: false })
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === 'Escape') {
+                e.preventDefault()
+                const obj = scene?.objects?.find(o => o.id === editingVertex.objectId)
+                if (!obj) {
+                  setEditingVertex({ objectId: null, vertexIndex: null, label: '', isCorner: false })
+                  return
+                }
+                
+                if (editingVertex.isCorner && obj.type === 'rectangle') {
+                  const cornerLabels = [...(obj.cornerLabels || [])]
+                  cornerLabels[editingVertex.vertexIndex] = editingVertex.label.trim() || undefined
+                  onUpdateObject(editingVertex.objectId, { cornerLabels })
+                } else if (obj.vertices?.[editingVertex.vertexIndex]) {
+                  const newVertices = [...obj.vertices]
+                  newVertices[editingVertex.vertexIndex] = {
+                    ...newVertices[editingVertex.vertexIndex],
+                    label: editingVertex.label.trim() || undefined
+                  }
+                  onUpdateObject(editingVertex.objectId, { vertices: newVertices })
+                }
+                setEditingVertex({ objectId: null, vertexIndex: null, label: '', isCorner: false })
+              }
+            }}
+            style={{
+              position: 'absolute',
+              left: `${labelPos.x}px`,
+              top: `${labelPos.y}px`,
+              transform: 'translate(-50%, -50%)',
+              background: '#1a1a2e',
+              color: '#ffffff',
+              border: '2px solid #4ade80',
+              borderRadius: '4px',
+              padding: '4px 8px',
+              fontSize: '18px',
+              fontFamily: '"Latin Modern Roman", "Computer Modern", "Times New Roman", serif',
+              zIndex: 1000,
+              minWidth: '60px',
+              outline: 'none'
+            }}
+            placeholder="Label"
+          />
+        )
+      })()}
     </div>
   )
 }

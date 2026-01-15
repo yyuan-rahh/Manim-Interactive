@@ -171,6 +171,54 @@ function Timeline({ scene, selectedObjectId, currentTime, onTimeChange, onAddKey
       }
     }
 
+    // Snap to other clip times (start/end) across all rows
+    const snapCandidates = []
+    rows.forEach(r => {
+      r.objects.forEach(o => {
+        if (o.id === objectId) return
+        const d = o.delay || 0
+        const rt = o.runTime || 1
+        snapCandidates.push(d, d + rt)
+      })
+    })
+
+    const nearestTime = (t) => {
+      let best = { dist: Infinity, t }
+      for (const c of snapCandidates) {
+        const dist = Math.abs(c - t)
+        if (dist < best.dist) best = { dist, t: c }
+      }
+      return best
+    }
+
+    if (snapCandidates.length > 0) {
+      if (dragType === 'move') {
+        const best = nearestTime(newDelay)
+        if (best.dist <= SNAP_TIME_THRESHOLD) {
+          const maxDelay = duration - newRunTime
+          newDelay = Math.max(0, Math.min(maxDelay, best.t))
+        }
+      } else if (dragType === 'start') {
+        const best = nearestTime(newDelay)
+        if (best.dist <= SNAP_TIME_THRESHOLD) {
+          const minStart = 0
+          const maxStart = initialDelay + initialRunTime - 0.1
+          const snapped = Math.max(minStart, Math.min(maxStart, best.t))
+          newDelay = snapped
+          newRunTime = initialRunTime - (newDelay - initialDelay)
+        }
+      } else if (dragType === 'end') {
+        const endTime = newDelay + newRunTime
+        const best = nearestTime(endTime)
+        if (best.dist <= SNAP_TIME_THRESHOLD) {
+          const minEnd = newDelay + 0.1
+          const maxEnd = duration
+          const snappedEnd = Math.max(minEnd, Math.min(maxEnd, best.t))
+          newRunTime = Math.max(0.1, snappedEnd - newDelay)
+        }
+      }
+    }
+
     // Update local drag state for visual feedback / mouseup behavior
     setDragState(prev => prev ? ({
       ...prev,

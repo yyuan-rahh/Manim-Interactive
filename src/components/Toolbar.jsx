@@ -33,6 +33,15 @@ function Toolbar({ onSave, onLoad, onClearAll, canClearAll, onRender, isRenderin
         <div className="toolbar-divider" />
         
         <button 
+          className="toolbar-btn" 
+          onClick={() => window.location.reload()}
+          title="Refresh App (Dev Mode - Reloads without losing data)"
+        >
+          <span className="btn-icon">🔄</span>
+          <span className="btn-label">Refresh</span>
+        </button>
+        
+        <button 
           className="toolbar-btn primary" 
           onClick={onRender}
           disabled={isRendering}

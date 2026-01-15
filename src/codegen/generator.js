@@ -150,7 +150,7 @@ function generateDefaultAnimations(objects, { idToSourceVar, idToTargetVar }) {
 /**
  * Convert scene name to valid Python class name
  */
-function sanitizeClassName(name) {
+export function sanitizeClassName(name) {
   // Remove non-alphanumeric, capitalize words, remove spaces
   return name
     .replace(/[^a-zA-Z0-9\s]/g, '')
@@ -193,14 +193,23 @@ function generateObjectCreation(obj, varName, objects = []) {
       const stroke = obj.stroke ? colorToManim(obj.stroke) : 'WHITE'
       const strokeWidth = obj.strokeWidth || 3
 
-      // Non-circular curve: quadratic Bézier.
-      // We store `cx, cy` as the midpoint-on-curve at t=0.5 and derive the actual control point P1.
+      // Quadratic Bézier curve using CubicBezier (convert quadratic to cubic)
+      // We store `cx, cy` as the midpoint-on-curve at t=0.5 and derive the control point.
       const x0 = obj.x, y0 = obj.y
       const x2 = obj.x2, y2 = obj.y2
-      const x1 = 2 * obj.cx - 0.5 * (x0 + x2)
-      const y1 = 2 * obj.cy - 0.5 * (y0 + y2)
+      // Derive quadratic control point P1 from midpoint
+      const qx1 = 2 * obj.cx - 0.5 * (x0 + x2)
+      const qy1 = 2 * obj.cy - 0.5 * (y0 + y2)
+      
+      // Convert quadratic Bezier to cubic Bezier
+      // For quadratic with control point Q, cubic control points are:
+      // C1 = P0 + 2/3*(Q - P0), C2 = P2 + 2/3*(Q - P2)
+      const cx1 = x0 + (2/3) * (qx1 - x0)
+      const cy1 = y0 + (2/3) * (qy1 - y0)
+      const cx2 = x2 + (2/3) * (qx1 - x2)
+      const cy2 = y2 + (2/3) * (qy1 - y2)
 
-      return `${varName} = QuadraticBezier([${x0}, ${y0}, 0], [${x1.toFixed(4)}, ${y1.toFixed(4)}, 0], [${x2}, ${y2}, 0]).set_stroke(color=${stroke}, width=${strokeWidth})`
+      return `${varName} = CubicBezier([${x0}, ${y0}, 0], [${cx1.toFixed(4)}, ${cy1.toFixed(4)}, 0], [${cx2.toFixed(4)}, ${cy2.toFixed(4)}, 0], [${x2}, ${y2}, 0], stroke_color=${stroke}, stroke_width=${strokeWidth})`
     }
     
     case 'dot': {
@@ -232,14 +241,22 @@ function generateObjectCreation(obj, varName, objects = []) {
     case 'text': {
       const fill = obj.fill ? colorToManim(obj.fill) : 'WHITE'
       const escaped = (obj.text || 'Text').replace(/"/g, '\\"')
-      return `${varName} = Text("${escaped}", font_size=${obj.fontSize || 48}, color=${fill}).move_to(${pos})`
+      const rotation = obj.rotation ? `.rotate(${obj.rotation} * DEGREES)` : ''
+      return `${varName} = Text("${escaped}", font_size=${obj.fontSize || 48}, color=${fill}).move_to(${pos})${rotation}`
     }
     
     case 'latex': {
       const fill = obj.fill ? colorToManim(obj.fill) : 'WHITE'
-      // LaTeX in raw strings doesn't need double escaping
-      const latex = obj.latex || '\\frac{a}{b}'
-      return `${varName} = MathTex(r"${latex}", color=${fill}).move_to(${pos})`
+      // Clean up LaTeX: remove placeholders and extra escaping from Desmos
+      let latex = obj.latex || '\\frac{a}{b}'
+      // Remove \placeholder{} which is Desmos-specific
+      latex = latex.replace(/\\placeholder\{\}/g, '')
+      // Remove any remaining empty braces that might cause issues
+      latex = latex.replace(/\{\s*\}/g, '')
+      // Clean up any double backslashes that might have been introduced
+      latex = latex.replace(/\\\\/g, '\\')
+      const rotation = obj.rotation ? `.rotate(${obj.rotation} * DEGREES)` : ''
+      return `${varName} = MathTex(r"${latex}", color=${fill}).move_to(${pos})${rotation}`
     }
     
     case 'axes': {
@@ -425,22 +442,8 @@ function generateAnimations(objects, { idToSourceVar, idToTargetVar }) {
  * Get default animation for object type
  */
 function getDefaultAnimation(type) {
-  switch (type) {
-    case 'text':
-    case 'latex':
-      return 'Write'
-    case 'circle':
-    case 'dot':
-      return 'GrowFromCenter'
-    case 'line':
-    case 'arrow':
-      return 'Create'
-    case 'polygon':
-    case 'triangle':
-      return 'DrawBorderThenFill'
-    default:
-      return 'Create'
-  }
+  // All shapes use Create animation by default
+  return 'Create'
 }
 
 /**

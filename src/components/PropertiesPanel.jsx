@@ -332,6 +332,20 @@ function PropertiesPanel({
                 onChange={(val) => handleNumberChange('fontSize', Math.round(val))}
               />
             </div>
+            <div className="property-group">
+              <label className="property-label">Width</label>
+              <NumberInput
+                value={object.width || 2}
+                onChange={(val) => handleNumberChange('width', Math.max(0.2, val))}
+              />
+            </div>
+            <div className="property-group">
+              <label className="property-label">Height</label>
+              <NumberInput
+                value={object.height || 0.8}
+                onChange={(val) => handleNumberChange('height', Math.max(0.2, val))}
+              />
+            </div>
           </>
         )}
         
@@ -476,10 +490,27 @@ function PropertiesPanel({
         
         <div className="property-group">
           <label className="property-label">Rotation (°)</label>
-          <NumberInput
-            value={object.rotation || 0}
-            onChange={(val) => handleNumberChange('rotation', val)}
-          />
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button
+              onClick={() => handleNumberChange('rotation', (object.rotation || 0) - 15)}
+              style={{ padding: '4px 8px', cursor: 'pointer' }}
+              title="Rotate -15°"
+            >
+              ↺ -15°
+            </button>
+            <NumberInput
+              value={object.rotation || 0}
+              onChange={(val) => handleNumberChange('rotation', val)}
+              style={{ flex: 1 }}
+            />
+            <button
+              onClick={() => handleNumberChange('rotation', (object.rotation || 0) + 15)}
+              style={{ padding: '4px 8px', cursor: 'pointer' }}
+              title="Rotate +15°"
+            >
+              ↻ +15°
+            </button>
+          </div>
         </div>
         
         <div className="property-group">

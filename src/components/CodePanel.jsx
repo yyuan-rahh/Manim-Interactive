@@ -1,12 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react'
 import './CodePanel.css'
 
-function CodePanel({ code, logs, onCodeChange }) {
+function CodePanel({ code, logs, onCodeChange, validationIssues = [] }) {
   const [activeTab, setActiveTab] = useState('code')
   const [copied, setCopied] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editedCode, setEditedCode] = useState(code)
   const textareaRef = useRef(null)
+  
+  const errors = validationIssues.filter(i => i.level === 'error')
+  const warnings = validationIssues.filter(i => i.level === 'warning')
 
   useEffect(() => {
     if (!isEditing) {
@@ -14,9 +17,10 @@ function CodePanel({ code, logs, onCodeChange }) {
     }
   }, [code, isEditing])
 
-  const copyToClipboard = async () => {
+  const copyToClipboard = async (text = null) => {
     try {
-      await navigator.clipboard.writeText(isEditing ? editedCode : code)
+      const textToCopy = text || (isEditing ? editedCode : code)
+      await navigator.clipboard.writeText(textToCopy)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (err) {
@@ -41,6 +45,27 @@ function CodePanel({ code, logs, onCodeChange }) {
 
   return (
     <div className="code-panel">
+      {errors.length > 0 && (
+        <div className="validation-banner error" style={{ background: '#fee2e2', color: '#991b1b', padding: '12px', borderRadius: '4px', marginBottom: '12px' }}>
+          <strong>Export Errors ({errors.length}):</strong>
+          <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px' }}>
+            {errors.map((err, i) => (
+              <li key={i}>{err.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {warnings.length > 0 && errors.length === 0 && (
+        <div className="validation-banner warning" style={{ background: '#fef3c7', color: '#92400e', padding: '12px', borderRadius: '4px', marginBottom: '12px' }}>
+          <strong>Warnings ({warnings.length}):</strong>
+          <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px' }}>
+            {warnings.map((warn, i) => (
+              <li key={i}>{warn.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      
       <div className="code-tabs">
         <button
           className={`code-tab ${activeTab === 'code' ? 'active' : ''}`}
@@ -69,10 +94,10 @@ function CodePanel({ code, logs, onCodeChange }) {
             ) : (
               <>
                 <button className="action-btn edit-btn" onClick={handleEdit}>
-                  ✎ Edit
+                  Edit
                 </button>
           <button className="copy-btn" onClick={copyToClipboard}>
-            {copied ? '✓ Copied' : '📋 Copy'}
+            {copied ? 'Copied' : 'Copy'}
           </button>
               </>
             )}
@@ -96,9 +121,22 @@ function CodePanel({ code, logs, onCodeChange }) {
           </pre>
           )
         ) : (
-          <pre className="logs-block">
-            {logs || 'No render logs yet. Click "Preview" to render.'}
-          </pre>
+          <>
+            {logs && (
+              <div style={{ marginBottom: '8px', textAlign: 'right' }}>
+                <button
+                  className="action-btn"
+                  onClick={() => copyToClipboard(logs)}
+                  style={{ fontSize: '12px', padding: '4px 8px' }}
+                >
+                  {copied ? 'Copied' : 'Copy Logs'}
+                </button>
+              </div>
+            )}
+            <pre className="logs-block">
+              {logs || 'No render logs yet. Click "Preview" to render.'}
+            </pre>
+          </>
         )}
       </div>
     </div>

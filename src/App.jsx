@@ -6,8 +6,10 @@ import CodePanel from './components/CodePanel'
 import Timeline from './components/Timeline'
 import Toolbar from './components/Toolbar'
 import VideoPreview from './components/VideoPreview'
-import { createEmptyProject, createEmptyScene, validateProject } from './project/schema'
+import { createEmptyProject, createEmptyScene, validateProject, createDemoScene } from './project/schema'
 import { generateManimCode, sanitizeClassName } from './codegen/generator'
+import { generateObjectName } from './utils/objectLabel'
+import { validateScene, getValidationSummary } from './utils/exportValidation'
 import './App.css'
 
 function App() {
@@ -235,7 +237,13 @@ function App() {
     if (!activeScene) return
 
     commit(`obj:add:${objectType}`, () => {
-      const newObject = { ...createObject(objectType), ...overrides }
+      const existingObjects = activeScene.objects || []
+      const baseObject = createObject(objectType, existingObjects)
+      const newObject = { ...baseObject, ...overrides }
+      // Ensure name is set (can be overridden in overrides)
+      if (!newObject.name) {
+        newObject.name = generateObjectName(newObject, existingObjects)
+      }
       setProject(prev => ({
         ...prev,
         scenes: prev.scenes.map(s => 
@@ -444,8 +452,32 @@ function App() {
   const renderPreview = useCallback(async () => {
     if (!window.electronAPI || !activeScene) return
     
+    // Run export sanity checks
+    const validationIssues = validateScene(activeScene)
+    const summary = getValidationSummary(validationIssues)
+    
+    if (summary.errorCount > 0) {
+      // Show validation errors in logs
+      const errorMessages = validationIssues
+        .filter(i => i.level === 'error')
+        .map(i => `Error: ${i.message}`)
+        .join('\n')
+      setRenderLogs(`Export validation failed:\n${errorMessages}\n\nPlease fix these issues before rendering.`)
+      alert(`Cannot render: ${summary.errorCount} error(s) found. See render logs for details.`)
+      return
+    }
+    
+    if (summary.warningCount > 0) {
+      // Show warnings but allow render
+      const warningMessages = validationIssues
+        .filter(i => i.level === 'warning')
+        .map(i => `Warning: ${i.message}`)
+        .join('\n')
+      setRenderLogs(`Warnings:\n${warningMessages}\n\nRendering anyway...\n`)
+    }
+    
     setIsRendering(true)
-    setRenderLogs('')
+    setRenderLogs(prev => prev + 'Starting render...\n')
     setVideoData(null)
     
     const sceneName = sanitizeClassName(activeScene.name)
@@ -462,8 +494,11 @@ function App() {
       if (videoResult.success) {
         setVideoData(videoResult.data)
         setShowVideoPreview(true)
+        setRenderLogs(prev => prev + 'Render completed successfully!\n')
       }
     } else {
+      const errorMsg = result.error || 'Unknown error'
+      setRenderLogs(prev => prev + `\nRender failed: ${errorMsg}\n`)
       console.error('Render failed:', result.error)
     }
     
@@ -489,6 +524,20 @@ function App() {
       setSelectedObjectId(null)
     })
   }, [activeScene, activeSceneId, commit])
+
+  const loadDemo = useCallback(() => {
+    commit('scene:loadDemo', () => {
+      const demoScene = createDemoScene()
+      setProject(prev => ({
+        ...prev,
+        scenes: prev.scenes.map(s =>
+          s.id === activeSceneId ? demoScene : s
+        )
+      }))
+      setActiveSceneId(demoScene.id)
+      setSelectedObjectId(null)
+    })
+  }, [activeSceneId, commit])
 
   const deleteSelectedObject = useCallback(() => {
     if (!selectedObjectId) return
@@ -537,6 +586,7 @@ function App() {
         canClearAll={(activeScene?.objects?.length || 0) > 0}
         onRender={renderPreview}
         isRendering={isRendering}
+        onLoadDemo={loadDemo}
       />
       
       <div className="main-content">
@@ -594,6 +644,7 @@ function App() {
               onSendBackward={sendBackward}
               onBringToFront={bringToFront}
               onSendToBack={sendToBack}
+              onSelectObject={setSelectedObjectId}
               scene={activeScene}
             />
           </div>
@@ -609,6 +660,7 @@ function App() {
               code={customCode || generatedCode}
               logs={renderLogs}
               onCodeChange={handleCodeChange}
+              validationIssues={activeScene ? validateScene(activeScene) : []}
             />
           </div>
         </div>
@@ -625,10 +677,11 @@ function App() {
 }
 
 // Helper to create new objects
-function createObject(type) {
+function createObject(type, existingObjects = []) {
   const baseObject = {
     id: crypto.randomUUID(),
     type,
+    name: generateObjectName({ type }, existingObjects),
     x: 0,
     y: 0,
     rotation: 0,
@@ -637,7 +690,8 @@ function createObject(type) {
     keyframes: [],
     runTime: 1,
     delay: 0,
-    animationType: 'auto'
+    animationType: 'auto',
+    exitAnimationType: 'FadeOut'
   }
   
   switch (type) {
@@ -694,6 +748,22 @@ function createObject(type) {
         stroke: '#ffffff',
         strokeWidth: 2,
         showTicks: true,
+        xLabel: 'x',
+        yLabel: 'y',
+        rotation: 0,
+        fill: undefined,
+      }
+    case 'graph':
+      return {
+        ...baseObject,
+        x: 0,
+        y: 0,
+        formula: 'x^2',
+        xRange: { min: -5, max: 5 },
+        yRange: { min: -3, max: 3 },
+        stroke: '#4ade80',
+        strokeWidth: 3,
+        axesId: null, // Can be linked to an axes object
         rotation: 0,
         fill: undefined,
       }
@@ -718,6 +788,70 @@ function createObject(type) {
         strokeWidth: 2 
       }
     }
+    case 'graphCursor':
+      return {
+        ...baseObject,
+        x: 0,
+        y: 0,
+        x0: 0, // x position on the graph
+        graphId: null, // Link to a graph object
+        axesId: null, // Optional link to axes for coordinate conversion
+        showCrosshair: true,
+        showDot: true,
+        showLabel: false,
+        labelFormat: '({x0}, {y0})',
+        fill: '#e94560',
+        radius: 0.08,
+      }
+    case 'tangentLine':
+      return {
+        ...baseObject,
+        x: 0,
+        y: 0,
+        graphId: null, // Link to a graph object (if no cursorId)
+        cursorId: null, // Link to a graphCursor object (preferred)
+        axesId: null, // Optional link to axes
+        derivativeStep: 0.001, // h for numerical derivative
+        visibleSpan: 2, // How far the tangent line extends from the point
+        showSlopeLabel: true,
+        slopeLabelOffset: 0.5,
+        stroke: '#fbbf24',
+        strokeWidth: 2,
+      }
+    case 'limitProbe':
+      return {
+        ...baseObject,
+        x: 0,
+        y: 0,
+        x0: 0, // Point to approach
+        graphId: null, // Link to a graph object
+        cursorId: null, // Optional link to a graphCursor to follow
+        axesId: null, // Optional link to axes
+        direction: 'both', // 'left', 'right', or 'both'
+        deltaSchedule: [1, 0.5, 0.1, 0.01], // Sequence of deltas for approaching
+        showReadout: true,
+        showPoints: true,
+        showArrow: true,
+        fill: '#3b82f6',
+        radius: 0.06,
+      }
+    case 'valueLabel':
+      return {
+        ...baseObject,
+        x: 0,
+        y: 0,
+        graphId: null, // Link to a graph for evaluation context
+        cursorId: null, // Link to a graphCursor to display its values
+        valueType: 'slope', // 'slope', 'x', 'y', 'limit', 'custom'
+        customExpression: '',
+        labelPrefix: '',
+        labelSuffix: '',
+        fontSize: 24,
+        fill: '#ffffff',
+        showBackground: false,
+        backgroundFill: '#000000',
+        backgroundOpacity: 0.7,
+      }
     default:
       return baseObject
   }

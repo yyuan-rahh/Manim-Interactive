@@ -1,7 +1,9 @@
 import React, { useMemo, useRef, useState, useEffect, useCallback } from 'react'
 import './Canvas.css'
-// Advanced math features (function graphs, calculus tools) removed
 import { convertLatexToMarkup } from 'mathlive'
+import { mathParser } from '../utils/mathParser'
+import { evalAt, derivativeAt, projectToGraph, tangentLineAt, limitEstimate, estimateLimit, clampToGraphRange, getGraphById, getCursorById } from '../utils/graphTools'
+import { getLinkingStatus, isEligibleLinkTarget, getBestLinkType, generateLinkUpdates } from '../utils/linking'
 
 const SHAPE_PALETTE = [
   { type: 'rectangle', icon: '▭', label: 'Rectangle' },
@@ -15,6 +17,11 @@ const SHAPE_PALETTE = [
   { type: 'text', icon: 'T', label: 'Text' },
   { type: 'latex', icon: '∑', label: 'LaTeX' },
   { type: 'axes', icon: '⊞', label: 'Axes' },
+  { type: 'graph', icon: 'ƒ', label: 'Graph' },
+  { type: 'graphCursor', icon: '•', label: 'Graph Cursor' },
+  { type: 'tangentLine', icon: '─', label: 'Tangent Line' },
+  { type: 'limitProbe', icon: '→', label: 'Limit Probe' },
+  { type: 'valueLabel', icon: 'T', label: 'Value Label' },
 ]
 
 // Riemann/FTC/Taylor features removed
@@ -200,6 +207,37 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
   const vertexInputRef = useRef(null)
   const latexLayerRef = useRef(null)
   const rotateStartRef = useRef(null)
+  
+  // Link mode state
+  const selectedObject = scene?.objects?.find(o => o.id === selectedObjectId)
+  const linkingStatus = selectedObject ? getLinkingStatus(selectedObject) : { needsLink: false, missingLinks: [], eligibleTargets: [] }
+  const [linkModeActive, setLinkModeActive] = useState(false)
+  const [hoveredLinkTarget, setHoveredLinkTarget] = useState(null)
+  
+  // Auto-enter link mode when selected object needs links
+  useEffect(() => {
+    if (linkingStatus.needsLink && selectedObjectId) {
+      setLinkModeActive(true)
+    } else {
+      setLinkModeActive(false)
+      setHoveredLinkTarget(null)
+    }
+  }, [linkingStatus.needsLink, selectedObjectId])
+  
+  // Handle Escape key to exit link mode
+  useEffect(() => {
+    if (!linkModeActive) return
+    
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') {
+        setLinkModeActive(false)
+        setHoveredLinkTarget(null)
+      }
+    }
+    
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [linkModeActive])
 
   // Convert Manim coords to canvas coords
   const manimToCanvas = useCallback((mx, my) => {
@@ -343,24 +381,62 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     if (scene?.objects) {
       const visible = getVisibleObjectsAtTime(scene.objects, currentTime)
       const sortedObjects = [...visible].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0))
+      
+      // Collect eligible link targets if in link mode
+      const eligibleTargetIds = new Set()
+      if (linkModeActive && selectedObject) {
+        sortedObjects.forEach(obj => {
+          if (obj.id !== selectedObjectId) {
+            const linkType = getBestLinkType(selectedObject, obj)
+            if (linkType) {
+              eligibleTargetIds.add(obj.id)
+            }
+          }
+        })
+      }
+      
       sortedObjects.forEach(obj => {
         if (obj.type === 'latex') return
-        drawObject(ctx, obj, obj.id === selectedObjectId, scene)
+        const isEligibleTarget = eligibleTargetIds.has(obj.id)
+        const isHoveredTarget = obj.id === hoveredLinkTarget
+        drawObject(ctx, obj, obj.id === selectedObjectId, scene, linkModeActive, isEligibleTarget, isHoveredTarget)
       })
     }
     
-  }, [scene, currentTime, selectedObjectId, canvasSize, manimToCanvas])
+  }, [scene, currentTime, selectedObjectId, canvasSize, manimToCanvas, linkModeActive, selectedObject, hoveredLinkTarget])
 
   const latexObjects = useMemo(() => {
     const objs = scene?.objects || []
     return getVisibleObjectsAtTime(objs, currentTime).filter(o => o.type === 'latex')
   }, [scene?.objects, currentTime])
 
-  const drawObject = (ctx, obj, isSelected, scene) => {
+  const drawObject = (ctx, obj, isSelected, scene, linkModeActive = false, isEligibleTarget = false, isHoveredTarget = false) => {
     const pos = manimToCanvas(obj.x, obj.y)
     
     ctx.save()
     ctx.translate(pos.x, pos.y)
+    
+    // Highlight eligible link targets
+    if (linkModeActive && isEligibleTarget) {
+      const bounds = getObjectBounds(obj)
+      const minX = manimToCanvas(bounds.minX, bounds.minY).x
+      const maxX = manimToCanvas(bounds.maxX, bounds.maxY).x
+      const minY = manimToCanvas(bounds.minX, bounds.minY).y
+      const maxY = manimToCanvas(bounds.maxX, bounds.maxY).y
+      const width = maxX - minX
+      const height = maxY - minY
+      const centerX = (minX + maxX) / 2
+      const centerY = (minY + maxY) / 2
+      
+      ctx.save()
+      ctx.translate(-pos.x, -pos.y)
+      ctx.globalAlpha = isHoveredTarget ? 0.4 : 0.2
+      ctx.fillStyle = isHoveredTarget ? '#4ade80' : '#3b82f6'
+      ctx.beginPath()
+      ctx.rect(centerX - width/2 - 10, centerY - height/2 - 10, width + 20, height + 20)
+      ctx.fill()
+      ctx.restore()
+    }
     ctx.rotate(-obj.rotation * Math.PI / 180) // Negative because canvas Y is inverted
 
     // For "arc" we actually want a non-circular curve: a quadratic Bézier.
@@ -566,6 +642,355 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           ctx.stroke()
         }
         }
+        
+        // Draw axis labels
+        ctx.fillStyle = stroke
+        ctx.font = '20px "Latin Modern Roman", "Computer Modern", "Times New Roman", serif'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        
+        // X-axis label (at the right end)
+        const xLabelText = obj.xLabel || 'x'
+        ctx.fillText(xLabelText, xLen / 2 + 20, 0)
+        
+        // Y-axis label (at the top end)
+        const yLabelText = obj.yLabel || 'y'
+        ctx.fillText(yLabelText, 0, -yLen / 2 - 20)
+        
+        break
+      }
+      
+      case 'graph': {
+        // Render a function graph
+        const stroke = obj.stroke || '#4ade80'
+        const strokeWidth = obj.strokeWidth || 3
+        const formula = obj.formula || 'x^2'
+        
+        // Get axis info (graph should be attached to an axes object)
+        const axesId = obj.axesId
+        const axes = scene?.objects?.find(o => o.id === axesId)
+        
+        // Use axes range if available, otherwise use default range
+        const xMin = axes?.xRange?.min ?? obj.xRange?.min ?? -5
+        const xMax = axes?.xRange?.max ?? obj.xRange?.max ?? 5
+        const yMin = axes?.yRange?.min ?? obj.yRange?.min ?? -3
+        const yMax = axes?.yRange?.max ?? obj.yRange?.max ?? 3
+        
+        // Sample the function
+        const samples = 200
+        const points = mathParser.sampleFunction(formula, xMin, xMax, samples)
+        
+        if (points.length > 1) {
+          ctx.strokeStyle = stroke
+          ctx.lineWidth = strokeWidth
+          ctx.globalAlpha = obj.opacity ?? 1
+          ctx.beginPath()
+          
+          let isFirstPoint = true
+          points.forEach(point => {
+            // Skip points outside y range
+            if (point.y < yMin || point.y > yMax) return
+            
+            // Convert from math coords to canvas coords (relative to obj.x, obj.y)
+            // The graph's (x,y) is the origin of its coordinate system
+            const canvasX = point.x * scaleX
+            const canvasY = -point.y * scaleY
+            
+            if (isFirstPoint) {
+              ctx.moveTo(canvasX, canvasY)
+              isFirstPoint = false
+            } else {
+              ctx.lineTo(canvasX, canvasY)
+            }
+          })
+          
+          ctx.stroke()
+          ctx.globalAlpha = 1
+        }
+        break
+      }
+      
+      case 'graphCursor': {
+        // Render a draggable point on a graph
+        const graph = getGraphById(scene?.objects || [], obj.graphId)
+        if (!graph) break
+        
+        const formula = graph.formula || 'x^2'
+        const x0 = obj.x0 ?? 0
+        const graphXRange = graph.xRange || { min: -5, max: 5 }
+        const clampedX0 = clampToGraphRange(x0, graphXRange)
+        const point = projectToGraph(formula, clampedX0)
+        
+        // Get axes if linked for coordinate conversion
+        const axes = obj.axesId ? scene?.objects?.find(o => o.id === obj.axesId) : null
+        const axesXRange = axes?.xRange || graphXRange
+        
+        // If we have a valid point, render it
+        if (!isNaN(point.y) && isFinite(point.y)) {
+          // Position relative to graph's origin or axes
+          const offsetX = (axes || graph).x || 0
+          const offsetY = (axes || graph).y || 0
+          
+          const canvasPoint = manimToCanvas(offsetX + point.x, offsetY + point.y)
+          const radius = (obj.radius || 0.08) * scaleX
+          const fill = obj.fill || '#e94560'
+          
+          ctx.globalAlpha = obj.opacity ?? 1
+          
+          // Draw crosshair if enabled
+          if (obj.showCrosshair) {
+            ctx.strokeStyle = fill
+            ctx.lineWidth = 1
+            ctx.setLineDash([5, 5])
+            const crosshairSize = 20
+            ctx.beginPath()
+            ctx.moveTo(canvasPoint.x - crosshairSize, canvasPoint.y)
+            ctx.lineTo(canvasPoint.x + crosshairSize, canvasPoint.y)
+            ctx.moveTo(canvasPoint.x, canvasPoint.y - crosshairSize)
+            ctx.lineTo(canvasPoint.x, canvasPoint.y + crosshairSize)
+            ctx.stroke()
+            ctx.setLineDash([])
+          }
+          
+          // Draw dot if enabled
+          if (obj.showDot) {
+            ctx.fillStyle = fill
+            ctx.beginPath()
+            ctx.arc(canvasPoint.x, canvasPoint.y, radius, 0, Math.PI * 2)
+            ctx.fill()
+            
+            // Draw white border
+            ctx.strokeStyle = '#ffffff'
+            ctx.lineWidth = 2
+            ctx.stroke()
+          }
+          
+          // Draw label if enabled
+          if (obj.showLabel) {
+            const labelText = (obj.labelFormat || '({x0}, {y0})')
+              .replace('{x0}', clampedX0.toFixed(2))
+              .replace('{y0}', point.y.toFixed(2))
+            ctx.fillStyle = '#ffffff'
+            ctx.font = '14px monospace'
+            ctx.textAlign = 'left'
+            ctx.textBaseline = 'top'
+            ctx.fillText(labelText, canvasPoint.x + radius + 5, canvasPoint.y - radius)
+          }
+          
+          ctx.globalAlpha = 1
+        }
+        break
+      }
+      
+      case 'tangentLine': {
+        // Render a tangent line to a graph
+        const graph = getGraphById(scene?.objects || [], obj.graphId)
+        if (!graph) break
+        
+        const formula = graph.formula || 'x^2'
+        const axes = obj.axesId ? scene?.objects?.find(o => o.id === obj.axesId) : null
+        
+        // Get x0 from cursor or use direct x0
+        let x0 = obj.x0 ?? 0
+        if (obj.cursorId) {
+          const cursor = getCursorById(scene?.objects || [], obj.cursorId)
+          if (cursor) {
+            x0 = cursor.x0 ?? 0
+          }
+        }
+        
+        const visibleSpan = obj.visibleSpan || 2
+        const h = obj.derivativeStep || 0.001
+        const tangent = tangentLineAt(formula, x0, visibleSpan, h)
+        
+        if (!isNaN(tangent.x1) && !isNaN(tangent.y1) && !isNaN(tangent.x2) && !isNaN(tangent.y2)) {
+          const offsetX = (axes || graph).x || 0
+          const offsetY = (axes || graph).y || 0
+          
+          const p1 = manimToCanvas(offsetX + tangent.x1, offsetY + tangent.y1)
+          const p2 = manimToCanvas(offsetX + tangent.x2, offsetY + tangent.y2)
+          
+          const stroke = obj.stroke || '#fbbf24'
+          const strokeWidth = obj.strokeWidth || 2
+          
+          ctx.globalAlpha = obj.opacity ?? 1
+          ctx.strokeStyle = stroke
+          ctx.lineWidth = strokeWidth
+          ctx.beginPath()
+          ctx.moveTo(p1.x, p1.y)
+          ctx.lineTo(p2.x, p2.y)
+          ctx.stroke()
+          
+          // Draw slope label if enabled
+          if (obj.showSlopeLabel) {
+            const slope = derivativeAt(formula, x0, h)
+            const midX = (p1.x + p2.x) / 2
+            const midY = (p1.y + p2.y) / 2
+            const labelText = `m = ${slope.toFixed(3)}`
+            ctx.fillStyle = stroke
+            ctx.font = '14px monospace'
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            const offset = (obj.slopeLabelOffset || 0.5) * scaleY
+            ctx.fillText(labelText, midX, midY - offset)
+          }
+          
+          ctx.globalAlpha = 1
+        }
+        break
+      }
+      
+      case 'limitProbe': {
+        // Render limit approach visualization
+        const graph = getGraphById(scene?.objects || [], obj.graphId)
+        if (!graph) break
+        
+        const formula = graph.formula || 'x^2'
+        const axes = obj.axesId ? scene?.objects?.find(o => o.id === obj.axesId) : null
+        
+        // Get x0 from cursor or use direct x0
+        let x0 = obj.x0 ?? 0
+        if (obj.cursorId) {
+          const cursor = getCursorById(scene?.objects || [], obj.cursorId)
+          if (cursor) {
+            x0 = cursor.x0 ?? 0
+          }
+        }
+        
+        const direction = obj.direction || 'both'
+        const deltaSchedule = obj.deltaSchedule || [1, 0.5, 0.1, 0.01]
+        const approachPoints = limitEstimate(formula, x0, direction, deltaSchedule)
+        
+        if (approachPoints.length > 0) {
+          const offsetX = (axes || graph).x || 0
+          const offsetY = (axes || graph).y || 0
+          const fill = obj.fill || '#3b82f6'
+          const radius = (obj.radius || 0.06) * scaleX
+          
+          ctx.globalAlpha = obj.opacity ?? 1
+          
+          // Draw approach points if enabled
+          if (obj.showPoints) {
+            approachPoints.forEach(point => {
+              const canvasPoint = manimToCanvas(offsetX + point.x, offsetY + point.y)
+              ctx.fillStyle = fill
+              ctx.beginPath()
+              ctx.arc(canvasPoint.x, canvasPoint.y, radius, 0, Math.PI * 2)
+              ctx.fill()
+            })
+          }
+          
+          // Draw arrows pointing to x0 if enabled
+          if (obj.showArrow) {
+            const targetPoint = manimToCanvas(offsetX + x0, offsetY + evalAt(formula, x0))
+            ctx.strokeStyle = fill
+            ctx.lineWidth = 2
+            ctx.setLineDash([])
+            
+            approachPoints.forEach(point => {
+              if (point.direction === 'left' || point.direction === 'right') {
+                const startPoint = manimToCanvas(offsetX + point.x, offsetY + point.y)
+                ctx.beginPath()
+                ctx.moveTo(startPoint.x, startPoint.y)
+                const dx = targetPoint.x - startPoint.x
+                const dy = targetPoint.y - startPoint.y
+                const len = Math.sqrt(dx * dx + dy * dy)
+                if (len > 0) {
+                  // Draw arrow
+                  const arrowLen = Math.min(len * 0.8, 30)
+                  const arrowX = startPoint.x + (dx / len) * arrowLen
+                  const arrowY = startPoint.y + (dy / len) * arrowLen
+                  ctx.lineTo(arrowX, arrowY)
+                  ctx.stroke()
+                  
+                  // Arrowhead
+                  const angle = Math.atan2(dy, dx)
+                  const arrowHeadLen = 8
+                  const arrowHeadAngle = Math.PI / 6
+                  ctx.beginPath()
+                  ctx.moveTo(arrowX, arrowY)
+                  ctx.lineTo(arrowX - arrowHeadLen * Math.cos(angle - arrowHeadAngle), arrowY - arrowHeadLen * Math.sin(angle - arrowHeadAngle))
+                  ctx.moveTo(arrowX, arrowY)
+                  ctx.lineTo(arrowX - arrowHeadLen * Math.cos(angle + arrowHeadAngle), arrowY - arrowHeadLen * Math.sin(angle + arrowHeadAngle))
+                  ctx.stroke()
+                }
+              }
+            })
+          }
+          
+          // Draw readout if enabled
+          if (obj.showReadout) {
+            const limitInfo = estimateLimit(formula, x0)
+            const readoutY = offsetY + 2
+            ctx.fillStyle = '#ffffff'
+            ctx.font = '14px monospace'
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            
+            let readoutText = ''
+            if (limitInfo.exists) {
+              readoutText = `lim f(x) = ${limitInfo.limit.toFixed(3)}`
+            } else {
+              readoutText = `L: ${limitInfo.leftValue.toFixed(3)}, R: ${limitInfo.rightValue.toFixed(3)}`
+            }
+            
+            const readoutPoint = manimToCanvas(offsetX + x0, readoutY)
+            ctx.fillText(readoutText, readoutPoint.x, readoutPoint.y)
+          }
+          
+          ctx.globalAlpha = 1
+        }
+        break
+      }
+      
+      case 'valueLabel': {
+        // Render a label that displays a computed value
+        const graph = obj.graphId ? getGraphById(scene?.objects || [], obj.graphId) : null
+        const cursor = obj.cursorId ? getCursorById(scene?.objects || [], obj.cursorId) : null
+        
+        let valueText = ''
+        
+        if (obj.valueType === 'slope' && graph && cursor) {
+          const formula = graph.formula || 'x^2'
+          const x0 = cursor.x0 ?? 0
+          const slope = derivativeAt(formula, x0)
+          valueText = `${obj.labelPrefix || ''}${slope.toFixed(3)}${obj.labelSuffix || ''}`
+        } else if (obj.valueType === 'x' && cursor) {
+          valueText = `${obj.labelPrefix || ''}${(cursor.x0 ?? 0).toFixed(2)}${obj.labelSuffix || ''}`
+        } else if (obj.valueType === 'y' && graph && cursor) {
+          const formula = graph.formula || 'x^2'
+          const x0 = cursor.x0 ?? 0
+          const y = evalAt(formula, x0)
+          valueText = `${obj.labelPrefix || ''}${y.toFixed(3)}${obj.labelSuffix || ''}`
+        } else if (obj.valueType === 'custom' && obj.customExpression) {
+          valueText = obj.customExpression
+        } else {
+          valueText = obj.labelPrefix || ''
+        }
+        
+        if (valueText) {
+          const canvasPoint = manimToCanvas(obj.x, obj.y)
+          const fontSize = obj.fontSize || 24
+          
+          ctx.globalAlpha = obj.opacity ?? 1
+          
+          // Draw background if enabled
+          if (obj.showBackground) {
+            ctx.fillStyle = obj.backgroundFill || '#000000'
+            ctx.globalAlpha = (obj.opacity ?? 1) * (obj.backgroundOpacity ?? 0.7)
+            ctx.fillRect(canvasPoint.x - 50, canvasPoint.y - 15, 100, 30)
+            ctx.globalAlpha = obj.opacity ?? 1
+          }
+          
+          // Draw text
+          ctx.fillStyle = obj.fill || '#ffffff'
+          ctx.font = `${fontSize}px monospace`
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(valueText, canvasPoint.x, canvasPoint.y)
+          
+          ctx.globalAlpha = 1
+        }
         break
       }
     }
@@ -679,14 +1104,42 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     ctx.restore()
     
     // Selection outline and handles
+    // Highlight linked targets when selected object is a tool
+    if (!isSelected && selectedObjectId && selectedObject) {
+      const isLinkedTarget = 
+        (object.type === 'graph' && selectedObject.graphId === object.id) ||
+        (object.type === 'graphCursor' && (selectedObject.cursorId === object.id || selectedObject.graphId === object.graphId)) ||
+        (object.type === 'axes' && (selectedObject.axesId === object.id || selectedObject.graphId && scene?.objects?.find(o => o.id === selectedObject.graphId)?.axesId === object.id))
+      
+      if (isLinkedTarget) {
+        ctx.save()
+        ctx.strokeStyle = '#fbbf24'
+        ctx.lineWidth = 2
+        ctx.setLineDash([3, 3])
+        ctx.globalAlpha = 0.6
+        const pad = 4
+        // Draw subtle highlight for linked targets (reuse outline logic below)
+        const bounds = getObjectBounds(obj)
+        const minX = manimToCanvas(bounds.minX, bounds.minY).x
+        const maxX = manimToCanvas(bounds.maxX, bounds.maxY).x
+        const minY = manimToCanvas(bounds.minX, bounds.minY).y
+        const maxY = manimToCanvas(bounds.maxX, bounds.maxY).y
+        ctx.beginPath()
+        ctx.rect(minX - pad, minY - pad, maxX - minX + pad * 2, maxY - minY + pad * 2)
+        ctx.stroke()
+        ctx.restore()
+      }
+    }
+    
     if (isSelected) {
       ctx.save()
       
-      // Draw shape-specific outline with padding
+      // Draw shape-specific outline with padding - stronger/more visible
       ctx.strokeStyle = '#e94560'
-      ctx.lineWidth = 3
-      ctx.setLineDash([5, 5])
-      const pad = 8
+      ctx.lineWidth = 4
+      ctx.setLineDash([6, 3])
+      ctx.globalAlpha = 1
+      const pad = 10
       
       switch (obj.type) {
         case 'rectangle': {
@@ -860,6 +1313,30 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         ctx.beginPath()
         ctx.arc(ctrl.x, ctrl.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
         ctx.fill()
+      } else if (obj.type === 'axes') {
+        // Draw axis endpoint handles for extending
+        const xLen = obj.xLength || 8
+        const yLen = obj.yLength || 4
+        const left = manimToCanvas(obj.x - xLen / 2, obj.y)
+        const right = manimToCanvas(obj.x + xLen / 2, obj.y)
+        const top = manimToCanvas(obj.x, obj.y + yLen / 2)
+        const bottom = manimToCanvas(obj.x, obj.y - yLen / 2)
+        
+        ctx.fillStyle = '#4ade80'
+        // X-axis endpoints
+        ctx.beginPath()
+        ctx.arc(left.x, left.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.beginPath()
+        ctx.arc(right.x, right.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
+        ctx.fill()
+        // Y-axis endpoints
+        ctx.beginPath()
+        ctx.arc(top.x, top.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.beginPath()
+        ctx.arc(bottom.x, bottom.y, HANDLE_SIZE/2 + 2, 0, Math.PI * 2)
+        ctx.fill()
       } else if (obj.type === 'text') {
         // Draw corner handles for text (like rectangles)
         ctx.fillStyle = '#4ade80'
@@ -1002,6 +1479,26 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           maxY: obj.y + yLen / 2
         }
         }
+      case 'graph': {
+        // Sample the function to get bounds
+        const formula = obj.formula || 'x^2'
+        const xMin = obj.xRange?.min ?? -5
+        const xMax = obj.xRange?.max ?? 5
+        const points = mathParser.sampleFunction(formula, xMin, xMax, 100)
+        
+        if (points.length === 0) {
+          return { minX: obj.x - 1, maxX: obj.x + 1, minY: obj.y - 1, maxY: obj.y + 1 }
+        }
+        
+        const xs = points.map(p => obj.x + p.x)
+        const ys = points.map(p => obj.y + p.y)
+        return {
+          minX: Math.min(...xs),
+          maxX: Math.max(...xs),
+          minY: Math.min(...ys),
+          maxY: Math.max(...ys)
+        }
+      }
       default:
         return { minX: obj.x - 1, maxX: obj.x + 1, minY: obj.y - 0.5, maxY: obj.y + 0.5 }
     }
@@ -1129,6 +1626,34 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         const dY = pointToLineDistance(mx, my, obj.x, y1, obj.x, y2)
         return Math.min(dX, dY) <= 0.25
       }
+      case 'graph': {
+        // Hit test near the graph curve
+        const formula = obj.formula || 'x^2'
+        const xMin = obj.xRange?.min ?? -5
+        const xMax = obj.xRange?.max ?? 5
+        
+        // Sample points near the click location
+        const samples = 50
+        const points = mathParser.sampleFunction(formula, xMin, xMax, samples)
+        
+        let minDist = Infinity
+        for (let i = 0; i < points.length - 1; i++) {
+          const p1 = points[i]
+          const p2 = points[i + 1]
+          
+          // Convert to absolute Manim coords (graph's position + function value)
+          const x1 = obj.x + p1.x
+          const y1 = obj.y + p1.y
+          const x2 = obj.x + p2.x
+          const y2 = obj.y + p2.y
+          
+          const dist = pointToLineDistance(mx, my, x1, y1, x2, y2)
+          if (dist < minDist) minDist = dist
+        }
+        
+        const strokeRadius = (obj.strokeWidth || 3) * 0.15
+        return minDist <= Math.max(strokeRadius, 0.3)
+      }
       case 'text': {
         // Text uses width/height like rectangles
         const halfW = (obj.width || 2) / 2
@@ -1148,6 +1673,91 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         const bounds = getObjectBounds(obj)
         return mx >= bounds.minX && mx <= bounds.maxX &&
                my >= bounds.minY && my <= bounds.maxY
+      }
+      case 'graphCursor': {
+        // Hit test the dot on the graph
+        const graph = getGraphById(scene?.objects || [], obj.graphId)
+        if (!graph) return false
+        
+        const formula = graph.formula || 'x^2'
+        const x0 = obj.x0 ?? 0
+        const graphXRange = graph.xRange || { min: -5, max: 5 }
+        const clampedX0 = clampToGraphRange(x0, graphXRange)
+        const point = projectToGraph(formula, clampedX0)
+        
+        if (isNaN(point.y) || !isFinite(point.y)) return false
+        
+        const axes = obj.axesId ? scene?.objects?.find(o => o.id === obj.axesId) : null
+        const offsetX = (axes || graph).x || 0
+        const offsetY = (axes || graph).y || 0
+        
+        const dist = Math.sqrt((mx - (offsetX + point.x)) ** 2 + (my - (offsetY + point.y)) ** 2)
+        const radius = obj.radius || 0.08
+        return dist <= radius * 1.5 // Make it easier to hit
+      }
+      case 'tangentLine': {
+        // Hit test along the tangent line
+        const graph = getGraphById(scene?.objects || [], obj.graphId)
+        if (!graph) return false
+        
+        const formula = graph.formula || 'x^2'
+        let x0 = obj.x0 ?? 0
+        if (obj.cursorId) {
+          const cursor = getCursorById(scene?.objects || [], obj.cursorId)
+          if (cursor) x0 = cursor.x0 ?? 0
+        }
+        
+        const visibleSpan = obj.visibleSpan || 2
+        const h = obj.derivativeStep || 0.001
+        const tangent = tangentLineAt(formula, x0, visibleSpan, h)
+        
+        if (isNaN(tangent.x1) || isNaN(tangent.y1) || isNaN(tangent.x2) || isNaN(tangent.y2)) {
+          return false
+        }
+        
+        const axes = obj.axesId ? scene?.objects?.find(o => o.id === obj.axesId) : null
+        const offsetX = (axes || graph).x || 0
+        const offsetY = (axes || graph).y || 0
+        
+        const dist = pointToLineDistance(mx, my, offsetX + tangent.x1, offsetY + tangent.y1, offsetX + tangent.x2, offsetY + tangent.y2)
+        return dist <= 0.2
+      }
+      case 'limitProbe': {
+        // Hit test approach points
+        const graph = getGraphById(scene?.objects || [], obj.graphId)
+        if (!graph) return false
+        
+        const formula = graph.formula || 'x^2'
+        let x0 = obj.x0 ?? 0
+        if (obj.cursorId) {
+          const cursor = getCursorById(scene?.objects || [], obj.cursorId)
+          if (cursor) x0 = cursor.x0 ?? 0
+        }
+        
+        const direction = obj.direction || 'both'
+        const deltaSchedule = obj.deltaSchedule || [1, 0.5, 0.1, 0.01]
+        const approachPoints = limitEstimate(formula, x0, direction, deltaSchedule)
+        
+        if (approachPoints.length === 0) return false
+        
+        const axes = obj.axesId ? scene?.objects?.find(o => o.id === obj.axesId) : null
+        const offsetX = (axes || graph).x || 0
+        const offsetY = (axes || graph).y || 0
+        const radius = obj.radius || 0.06
+        
+        for (const point of approachPoints) {
+          const dist = Math.sqrt((mx - (offsetX + point.x)) ** 2 + (my - (offsetY + point.y)) ** 2)
+          if (dist <= radius * 1.5) return true
+        }
+        
+        return false
+      }
+      case 'valueLabel': {
+        // Hit test bounding box (approximate based on text size)
+        const fontSize = obj.fontSize || 24
+        const padding = fontSize * 0.5 / scaleX // Approximate text width
+        return mx >= obj.x - padding && mx <= obj.x + padding &&
+               my >= obj.y - fontSize * 0.3 / scaleY && my <= obj.y + fontSize * 0.3 / scaleY
       }
       default: {
         const bounds = getObjectBounds(obj)
@@ -1254,6 +1864,22 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       if (Math.hypot(canvasX - start.x, canvasY - start.y) < HANDLE_SIZE + 4) return 'start'
       if (Math.hypot(canvasX - end.x, canvasY - end.y) < HANDLE_SIZE + 4) return 'end'
       if (Math.hypot(canvasX - ctrl.x, canvasY - ctrl.y) < HANDLE_SIZE + 4) return 'control'
+      return null
+    }
+    
+    // For axes, check endpoint handles
+    if (obj.type === 'axes') {
+      const xLen = obj.xLength || 8
+      const yLen = obj.yLength || 4
+      const left = manimToCanvas(obj.x - xLen / 2, obj.y)
+      const right = manimToCanvas(obj.x + xLen / 2, obj.y)
+      const top = manimToCanvas(obj.x, obj.y + yLen / 2)
+      const bottom = manimToCanvas(obj.x, obj.y - yLen / 2)
+      
+      if (Math.hypot(canvasX - left.x, canvasY - left.y) < HANDLE_SIZE + 4) return 'left'
+      if (Math.hypot(canvasX - right.x, canvasY - right.y) < HANDLE_SIZE + 4) return 'right'
+      if (Math.hypot(canvasX - top.x, canvasY - top.y) < HANDLE_SIZE + 4) return 'top'
+      if (Math.hypot(canvasX - bottom.x, canvasY - bottom.y) < HANDLE_SIZE + 4) return 'bottom'
       return null
     }
     
@@ -1365,6 +1991,28 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
     
+    // Link mode: if active, try to link to clicked object
+    if (linkModeActive && selectedObjectId && selectedObject) {
+      const manim = canvasToManim(x, y)
+      const objects = getVisibleObjectsAtTime(scene.objects, currentTime)
+      
+      // Check if clicking on an eligible target
+      for (const obj of objects) {
+        if (hitTestShape(obj, manim.x, manim.y)) {
+          const linkType = getBestLinkType(selectedObject, obj)
+          if (linkType) {
+            const updates = generateLinkUpdates(selectedObject, obj)
+            onUpdateObject(selectedObjectId, updates)
+            setLinkModeActive(false)
+            setHoveredLinkTarget(null)
+            e.preventDefault()
+            e.stopPropagation()
+            return
+          }
+        }
+      }
+    }
+    
     // First check if clicking on a handle of the selected object
     if (selectedObjectId) {
       const selectedObj = getVisibleObjectsAtTime(scene.objects, currentTime).find(o => o.id === selectedObjectId)
@@ -1384,7 +2032,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           setActiveHandle(handleHit)
           return
         }
-        // Double-click on vertex to edit label
+        // Double-click on handle to edit labels
         if (e.detail === 2) {
           if (handleHit.startsWith('vertex-')) {
             const vertexIndex = parseInt(handleHit.split('-')[1])
@@ -1399,6 +2047,19 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
             const cornerIndex = parseInt(handleHit.split('-')[1])
             const cornerLabels = selectedObj.cornerLabels || []
             setEditingVertex({ objectId: selectedObjectId, vertexIndex: cornerIndex, label: cornerLabels[cornerIndex] || '', isCorner: true })
+            setTimeout(() => vertexInputRef.current?.focus(), 0)
+            return
+          } else if (selectedObj.type === 'axes' && (handleHit === 'right' || handleHit === 'top')) {
+            // Double-click on axes endpoint to edit label
+            const isXAxis = handleHit === 'right'
+            setEditingVertex({ 
+              objectId: selectedObjectId, 
+              vertexIndex: -1, 
+              label: isXAxis ? (selectedObj.xLabel || 'x') : (selectedObj.yLabel || 'y'), 
+              isCorner: false,
+              isAxisLabel: true,
+              axis: isXAxis ? 'x' : 'y'
+            })
             setTimeout(() => vertexInputRef.current?.focus(), 0)
             return
           }
@@ -1454,6 +2115,33 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
   }
 
   const handleMouseMove = (e) => {
+    // Update hovered link target in link mode
+    if (linkModeActive && selectedObjectId && selectedObject) {
+      const rect = canvasRef.current.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      const manim = canvasToManim(x, y)
+      const objects = getVisibleObjectsAtTime(scene.objects, currentTime)
+      
+      let foundTarget = null
+      for (const obj of objects) {
+        if (obj.id !== selectedObjectId && hitTestShape(obj, manim.x, manim.y)) {
+          const linkType = getBestLinkType(selectedObject, obj)
+          if (linkType) {
+            foundTarget = obj.id
+            break
+          }
+        }
+      }
+      
+      if (foundTarget !== hoveredLinkTarget) {
+        setHoveredLinkTarget(foundTarget)
+      }
+      
+      // Don't process dragging if in link mode
+      return
+    }
+    
     if (!isDragging || !selectedObjectId) return
     
     const dx = (e.clientX - dragStart.x) / scaleX
@@ -1505,6 +2193,38 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           cx: parseFloat((rawCtrl.x + delta.x).toFixed(2)),
           cy: parseFloat((rawCtrl.y + delta.y).toFixed(2)),
         })
+      } else if (obj.type === 'graphCursor') {
+        // Constrain cursor to the graph when dragging
+        const graph = getGraphById(scene?.objects || [], obj.graphId)
+        if (!graph) return
+        
+        const formula = graph.formula || 'x^2'
+        const graphXRange = graph.xRange || { min: -5, max: 5 }
+        
+        // Get axes if linked for coordinate conversion
+        const axes = obj.axesId ? scene?.objects?.find(o => o.id === obj.axesId) : null
+        const offsetX = (axes || graph).x || 0
+        
+        // Convert current drag position to Manim coordinates
+        const currentManim = canvasToManim(dragStart.x + dx, dragStart.y + dy)
+        
+        // Extract x-value from drag position (relative to graph/axes origin)
+        const dragX = currentManim.x - offsetX
+        
+        // Clamp to graph range
+        const clampedX = clampToGraphRange(dragX, graphXRange)
+        
+        // Project to graph to get y-value
+        const point = projectToGraph(formula, clampedX)
+        
+        // Update cursor position
+        if (!isNaN(point.y) && isFinite(point.y)) {
+          onUpdateObject(selectedObjectId, { 
+            x0: parseFloat(clampedX.toFixed(4)),
+            x: offsetX + point.x,
+            y: (axes || graph).y + point.y
+          })
+        }
       } else {
       const rawX = dragOffset.x + dx
       const rawY = dragOffset.y + dy
@@ -1698,6 +2418,58 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         return
       }
       
+      // Handle axes endpoint dragging to extend axes
+      if (obj.type === 'axes') {
+        const MIN_LENGTH = 1
+        if (activeHandle === 'left' || activeHandle === 'right') {
+          // Dragging x-axis endpoints
+          const delta = activeHandle === 'right' ? dx : -dx
+          const newXLength = Math.max(MIN_LENGTH, (dragOffset.xLength || 8) + delta * 2)
+          onUpdateObject(selectedObjectId, { xLength: parseFloat(newXLength.toFixed(2)) })
+        } else if (activeHandle === 'top' || activeHandle === 'bottom') {
+          // Dragging y-axis endpoints
+          const delta = activeHandle === 'top' ? dy : -dy
+          const newYLength = Math.max(MIN_LENGTH, (dragOffset.yLength || 4) + delta * 2)
+          onUpdateObject(selectedObjectId, { yLength: parseFloat(newYLength.toFixed(2)) })
+        }
+        return
+      }
+      
+      // Handle graphCursor dragging - constrain to the graph
+      if (obj.type === 'graphCursor') {
+        const graph = getGraphById(scene?.objects || [], obj.graphId)
+        if (!graph) return
+        
+        const formula = graph.formula || 'x^2'
+        const graphXRange = graph.xRange || { min: -5, max: 5 }
+        
+        // Get axes if linked for coordinate conversion
+        const axes = obj.axesId ? scene?.objects?.find(o => o.id === obj.axesId) : null
+        const offsetX = (axes || graph).x || 0
+        
+        // Convert current drag position to Manim coordinates
+        const currentManim = canvasToManim(dragStart.x + dx, dragStart.y + dy)
+        
+        // Extract x-value from drag position (relative to graph/axes origin)
+        const dragX = currentManim.x - offsetX
+        
+        // Clamp to graph range
+        const clampedX = clampToGraphRange(dragX, graphXRange)
+        
+        // Project to graph to get y-value
+        const point = projectToGraph(formula, clampedX)
+        
+        // Update cursor position
+        if (!isNaN(point.y) && isFinite(point.y)) {
+          onUpdateObject(selectedObjectId, { 
+            x0: parseFloat(clampedX.toFixed(4)),
+            x: offsetX + point.x,
+            y: (axes || graph).y + point.y
+          })
+        }
+        return
+      }
+      
       // For circles/dots, resize radius based on distance from center
       if (obj.type === 'circle' || obj.type === 'dot') {
         const dist = Math.sqrt(dx * dx + dy * dy)
@@ -1761,11 +2533,18 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           className={`palette-item snap-toggle ${snapEnabled ? 'active' : ''}`}
           onClick={() => setSnapEnabled(!snapEnabled)}
           title={snapEnabled ? 'Snapping ON (click to disable)' : 'Snapping OFF (click to enable)'}
+          style={snapEnabled ? { background: '#3b82f6', color: 'white' } : {}}
         >
           <span className="palette-icon">⊞</span>
           <span className="palette-label">{snapEnabled ? 'Snap ON' : 'Snap OFF'}</span>
         </button>
       </div>
+      
+      {linkModeActive && linkingStatus.eligibleTargets.length > 0 && (
+        <div style={{ position: 'absolute', top: '10px', left: '50%', transform: 'translateX(-50%)', zIndex: 1000, background: '#3b82f6', color: 'white', padding: '8px 16px', borderRadius: '4px', fontSize: '14px', pointerEvents: 'none' }}>
+          Link Mode: Click on an eligible {linkingStatus.eligibleTargets.join(' or ')} to link (Press Esc to cancel)
+        </div>
+      )}
       
       <div className="canvas-wrapper">
         <div className="canvas-stage" style={{ width: canvasSize.width, height: canvasSize.height }}>
@@ -1805,7 +2584,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
                   onUpdateObject?.(obj.id, { rotation: next })
                 }}
               >
-                ↻
+                +15°
               </button>
             )
           })()}
@@ -1879,7 +2658,16 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         const LABEL_OFFSET = 30
         let labelPos
         
-        if (editingVertex.isCorner && obj.type === 'rectangle') {
+        // Handle axes label editing
+        if (editingVertex.isAxisLabel && obj.type === 'axes') {
+          const xLen = obj.xLength || 8
+          const yLen = obj.yLength || 4
+          if (editingVertex.axis === 'x') {
+            labelPos = manimToCanvas(obj.x + xLen / 2 + 0.5, obj.y)
+          } else {
+            labelPos = manimToCanvas(obj.x, obj.y + yLen / 2 + 0.5)
+          }
+        } else if (editingVertex.isCorner && obj.type === 'rectangle') {
           const corners = [
             { x: obj.x - obj.width/2, y: obj.y + obj.height/2 },
             { x: obj.x + obj.width/2, y: obj.y + obj.height/2 },
@@ -1942,11 +2730,19 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
             onBlur={() => {
               const obj = scene?.objects?.find(o => o.id === editingVertex.objectId)
               if (!obj) {
-                setEditingVertex({ objectId: null, vertexIndex: null, label: '', isCorner: false })
+                setEditingVertex({ objectId: null, vertexIndex: null, label: '', isCorner: false, isAxisLabel: false })
                 return
               }
               
-              if (editingVertex.isCorner && obj.type === 'rectangle') {
+              if (editingVertex.isAxisLabel && obj.type === 'axes') {
+                const updates = {}
+                if (editingVertex.axis === 'x') {
+                  updates.xLabel = editingVertex.label.trim() || 'x'
+                } else {
+                  updates.yLabel = editingVertex.label.trim() || 'y'
+                }
+                onUpdateObject(editingVertex.objectId, updates)
+              } else if (editingVertex.isCorner && obj.type === 'rectangle') {
                 const cornerLabels = [...(obj.cornerLabels || [])]
                 cornerLabels[editingVertex.vertexIndex] = editingVertex.label.trim() || undefined
                 onUpdateObject(editingVertex.objectId, { cornerLabels })
@@ -1958,18 +2754,26 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
                 }
                 onUpdateObject(editingVertex.objectId, { vertices: newVertices })
               }
-              setEditingVertex({ objectId: null, vertexIndex: null, label: '', isCorner: false })
+              setEditingVertex({ objectId: null, vertexIndex: null, label: '', isCorner: false, isAxisLabel: false })
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === 'Escape') {
                 e.preventDefault()
                 const obj = scene?.objects?.find(o => o.id === editingVertex.objectId)
                 if (!obj) {
-                  setEditingVertex({ objectId: null, vertexIndex: null, label: '', isCorner: false })
+                  setEditingVertex({ objectId: null, vertexIndex: null, label: '', isCorner: false, isAxisLabel: false })
                   return
                 }
                 
-                if (editingVertex.isCorner && obj.type === 'rectangle') {
+                if (editingVertex.isAxisLabel && obj.type === 'axes') {
+                  const updates = {}
+                  if (editingVertex.axis === 'x') {
+                    updates.xLabel = editingVertex.label.trim() || 'x'
+                  } else {
+                    updates.yLabel = editingVertex.label.trim() || 'y'
+                  }
+                  onUpdateObject(editingVertex.objectId, updates)
+                } else if (editingVertex.isCorner && obj.type === 'rectangle') {
                   const cornerLabels = [...(obj.cornerLabels || [])]
                   cornerLabels[editingVertex.vertexIndex] = editingVertex.label.trim() || undefined
                   onUpdateObject(editingVertex.objectId, { cornerLabels })
@@ -1981,7 +2785,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
                   }
                   onUpdateObject(editingVertex.objectId, { vertices: newVertices })
                 }
-                setEditingVertex({ objectId: null, vertexIndex: null, label: '', isCorner: false })
+                setEditingVertex({ objectId: null, vertexIndex: null, label: '', isCorner: false, isAxisLabel: false })
               }
             }}
             style={{

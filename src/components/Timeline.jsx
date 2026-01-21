@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import './Timeline.css'
+import { getObjectDisplayName as getObjectDisplayNameHelper, getObjectTypeDisplayName } from '../utils/objectLabel'
 
 function Timeline({ scene, selectedObjectId, currentTime, onTimeChange, onAddKeyframe, onSelectObject, onUpdateObject }) {
   const [isPlaying, setIsPlaying] = useState(false)
@@ -307,7 +308,30 @@ function Timeline({ scene, selectedObjectId, currentTime, onTimeChange, onAddKey
   }
 
   const getObjectDisplayName = (obj) => {
-    return obj.name || obj.text || obj.latex || obj.type
+    return getObjectDisplayNameHelper(obj, scene?.objects || [])
+  }
+  
+  const getObjectTypeBadge = (obj) => {
+    return getObjectTypeDisplayName(obj.type)
+  }
+  
+  // Check if an object is part of a composable chain
+  const isPartOfComposableChain = (obj) => {
+    if (obj.type === 'graph') {
+      // Graph has cursor/tangent/limit tools
+      return (scene?.objects || []).some(o => 
+        (o.type === 'graphCursor' || o.type === 'tangentLine' || o.type === 'limitProbe' || o.type === 'valueLabel') &&
+        (o.graphId === obj.id || o.cursorId && (scene?.objects || []).find(c => c.id === o.cursorId)?.graphId === obj.id)
+      )
+    }
+    if (obj.type === 'graphCursor') {
+      // Cursor has tangent/limit/label tools
+      return (scene?.objects || []).some(o => 
+        (o.type === 'tangentLine' || o.type === 'limitProbe' || o.type === 'valueLabel') &&
+        o.cursorId === obj.id
+      )
+    }
+    return false
   }
 
   const getObjectColor = (obj) => {
@@ -382,22 +406,49 @@ function Timeline({ scene, selectedObjectId, currentTime, onTimeChange, onAddKey
               onClick={() => handleAddKeyframe('x')}
               title="Position keyframe"
             >
-              📍 Position
+              Position
             </button>
             <button 
               className="keyframe-btn"
               onClick={() => handleAddKeyframe('opacity')}
               title="Opacity keyframe"
             >
-              👁 Opacity
+              Opacity
             </button>
             <button 
               className="keyframe-btn"
               onClick={() => handleAddKeyframe('rotation')}
               title="Rotation keyframe"
             >
-              🔄 Rotation
+              Rotation
             </button>
+            {selectedObject.type === 'graphCursor' && (
+              <button 
+                className="keyframe-btn"
+                onClick={() => handleAddKeyframe('x0')}
+                title="Cursor x-position keyframe"
+              >
+                X Position
+              </button>
+            )}
+            {selectedObject.type === 'tangentLine' && (
+              <button 
+                className="keyframe-btn"
+                onClick={() => handleAddKeyframe('visibleSpan')}
+                title="Tangent span keyframe"
+              >
+                Span
+              </button>
+            )}
+            {selectedObject.type === 'limitProbe' && (
+              <button 
+                className="keyframe-btn"
+                onClick={() => handleAddKeyframe('x0')}
+                title="Limit point keyframe"
+              >
+                Limit Point
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -435,6 +486,15 @@ function Timeline({ scene, selectedObjectId, currentTime, onTimeChange, onAddKey
             >
               <div className="track-label">
                 <span className="track-icon" style={{ backgroundColor: rowColor }} />
+                {rootObj && (
+                  <span 
+                    className="track-type-badge"
+                    style={{ fontSize: '10px', color: '#9ca3af', marginRight: '4px' }}
+                    title={getObjectTypeBadge(rootObj)}
+                  >
+                    {getObjectTypeBadge(rootObj).substring(0, 3)}
+                  </span>
+                )}
                 <span
                   className="track-name"
                   onDoubleClick={(e) => {
@@ -445,6 +505,11 @@ function Timeline({ scene, selectedObjectId, currentTime, onTimeChange, onAddKey
                 >
                   {rowName}
                 </span>
+                {rootObj && isPartOfComposableChain(rootObj) && (
+                  <span style={{ fontSize: '10px', color: '#3b82f6', marginLeft: '4px' }} title="Has linked tools">
+                    →
+                  </span>
+                )}
               </div>
               <div
                 className="track-bar"
@@ -500,7 +565,7 @@ function Timeline({ scene, selectedObjectId, currentTime, onTimeChange, onAddKey
                           placeholder={getObjectDisplayName(obj)}
                         />
                       ) : (
-                        <span className="clip-label" title="Double-click to rename">
+                        <span className="clip-label" title={`${getObjectTypeBadge(obj)} - Double-click to rename`}>
                           {getObjectDisplayName(obj)}
                         </span>
                       )}

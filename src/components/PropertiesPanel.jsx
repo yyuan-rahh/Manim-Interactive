@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import './PropertiesPanel.css'
 import DesmosMathField from './DesmosMathField'
+import { getObjectFullLabel, getObjectDisplayName, getLinkingStatus } from '../utils/objectLabel'
+import { getLinkingStatus as getLinkingStatusHelper } from '../utils/linking'
+import { mathParser } from '../utils/mathParser'
 
 // Controlled number input that allows editing
 function NumberInput({ value, onChange, step = 0.1, min, max, ...props }) {
@@ -50,7 +53,8 @@ function PropertiesPanel({
   onBringForward,
   onSendBackward,
   onBringToFront,
-  onSendToBack
+  onSendToBack,
+  onSelectObject
 }) {
   if (!object) {
     return (
@@ -74,6 +78,50 @@ function PropertiesPanel({
   }
 
   const transformCandidates = (scene?.objects || []).filter(o => o.id !== object.id)
+  
+  // Get linking status for warnings
+  const linkingStatus = getLinkingStatusHelper(object)
+  
+  // Formula validation
+  const [formulaValidation, setFormulaValidation] = useState({ valid: true, error: null })
+  useEffect(() => {
+    if (object?.formula) {
+      const validation = mathParser.validate(object.formula)
+      setFormulaValidation(validation)
+    } else {
+      setFormulaValidation({ valid: true, error: null })
+    }
+  }, [object?.formula])
+  
+  // Check for discontinuity at cursor x0
+  const [discontinuityWarning, setDiscontinuityWarning] = useState(null)
+  useEffect(() => {
+    if (object?.type === 'graphCursor' && object.graphId && object.x0 !== undefined) {
+      const graph = (scene?.objects || []).find(o => o.id === object.graphId)
+      if (graph?.formula) {
+        const x0 = object.x0
+        const y = mathParser.evaluate(graph.formula, x0)
+        if (isNaN(y) || !isFinite(y)) {
+          setDiscontinuityWarning(`Function undefined at x = ${x0.toFixed(2)}`)
+        } else {
+          // Check if it's near a known discontinuity (e.g., division by zero)
+          const testNearby = [
+            mathParser.evaluate(graph.formula, x0 + 0.0001),
+            mathParser.evaluate(graph.formula, x0 - 0.0001)
+          ]
+          if (testNearby.some(val => isNaN(val) || !isFinite(val))) {
+            setDiscontinuityWarning(`Function may be discontinuous near x = ${x0.toFixed(2)}`)
+          } else {
+            setDiscontinuityWarning(null)
+          }
+        }
+      } else {
+        setDiscontinuityWarning(null)
+      }
+    } else {
+      setDiscontinuityWarning(null)
+    }
+  }, [object?.type, object?.graphId, object?.x0, scene?.objects])
 
   return (
     <div className="properties-panel">
@@ -84,7 +132,7 @@ function PropertiesPanel({
           onClick={() => onDeleteObject(object.id)}
           title="Delete Object"
         >
-          🗑️
+          Delete
         </button>
       </div>
       
@@ -101,28 +149,28 @@ function PropertiesPanel({
             onClick={() => onBringToFront(object.id)}
             title="Bring to Front"
           >
-            ⬆⬆
+            Front
           </button>
           <button 
             className="layer-btn" 
             onClick={() => onBringForward(object.id)}
             title="Bring Forward"
           >
-            ⬆
+            Up
           </button>
           <button 
             className="layer-btn" 
             onClick={() => onSendBackward(object.id)}
             title="Send Backward"
           >
-            ⬇
+            Down
           </button>
           <button 
             className="layer-btn" 
             onClick={() => onSendToBack(object.id)}
             title="Send to Back"
           >
-            ⬇⬇
+            Back
           </button>
         </div>
         
@@ -415,6 +463,589 @@ function PropertiesPanel({
                 Show Ticks
               </label>
             </div>
+            <div className="property-row">
+              <div className="property-group">
+                <label className="property-label">X-Axis Label</label>
+                <input
+                  type="text"
+                  value={object.xLabel || 'x'}
+                  onChange={(e) => handleChange('xLabel', e.target.value)}
+                  placeholder="x"
+                />
+              </div>
+              <div className="property-group">
+                <label className="property-label">Y-Axis Label</label>
+                <input
+                  type="text"
+                  value={object.yLabel || 'y'}
+                  onChange={(e) => handleChange('yLabel', e.target.value)}
+                  placeholder="y"
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {object.type === 'graph' && (
+          <>
+            <div className="property-section-title">Math</div>
+            <div className="property-group">
+              <label className="property-label">Function f(x)</label>
+              <DesmosMathField
+                value={object.formula || 'x^2'}
+                onChange={(latex) => handleChange('formula', latex)}
+                placeholder="Enter function: x^2, sin(x), etc."
+              />
+              {formulaValidation.valid ? (
+                <div className="property-info" style={{ color: '#4ade80' }}>
+                  ✓ Valid
+                </div>
+              ) : (
+                <div className="property-info" style={{ color: '#ef4444' }}>
+                  ✗ Invalid: {formulaValidation.error}
+                </div>
+              )}
+              <div className="property-info">
+                Examples: x^2, sin(x), cos(x), exp(x), sqrt(x), x^3 - 2*x
+              </div>
+            </div>
+            <div className="property-row">
+              <div className="property-group">
+                <label className="property-label">X Min</label>
+                <NumberInput
+                  value={object.xRange?.min ?? -5}
+                  onChange={(val) => handleChange('xRange', { ...object.xRange, min: val, max: object.xRange?.max ?? 5 })}
+                />
+              </div>
+              <div className="property-group">
+                <label className="property-label">X Max</label>
+                <NumberInput
+                  value={object.xRange?.max ?? 5}
+                  onChange={(val) => handleChange('xRange', { ...object.xRange, min: object.xRange?.min ?? -5, max: val })}
+                />
+              </div>
+            </div>
+            <div className="property-row">
+              <div className="property-group">
+                <label className="property-label">Y Min</label>
+                <NumberInput
+                  value={object.yRange?.min ?? -3}
+                  onChange={(val) => handleChange('yRange', { ...object.yRange, min: val, max: object.yRange?.max ?? 3 })}
+                />
+              </div>
+              <div className="property-group">
+                <label className="property-label">Y Max</label>
+                <NumberInput
+                  value={object.yRange?.max ?? 3}
+                  onChange={(val) => handleChange('yRange', { ...object.yRange, min: object.yRange?.min ?? -3, max: val })}
+                />
+              </div>
+            </div>
+            <div className="property-section-title">Linking</div>
+            <div className="property-group">
+              <label className="property-label">Link to Axes (optional)</label>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <select
+                  value={object.axesId || ''}
+                  onChange={(e) => handleChange('axesId', e.target.value || null)}
+                  className="animation-select"
+                  style={{ flex: 1 }}
+                >
+                  <option value="">(none - independent)</option>
+                  {(scene?.objects || [])
+                    .filter(o => o.type === 'axes' && o.id !== object.id)
+                    .map(axes => (
+                      <option key={axes.id} value={axes.id}>
+                        {getObjectFullLabel(axes, scene?.objects || [])}
+                      </option>
+                    ))
+                  }
+                </select>
+                {object.axesId && onSelectObject && (
+                  <button
+                    onClick={() => onSelectObject(object.axesId)}
+                    title="Jump to linked axes"
+                    style={{ padding: '4px 8px', fontSize: '12px' }}
+                  >
+                    →
+                  </button>
+                )}
+              </div>
+              <div className="property-info">
+                Link to an axes object to automatically use its range and position
+              </div>
+            </div>
+          </>
+        )}
+
+        {object.type === 'graphCursor' && (
+          <>
+            <div className="property-section-title">Linking</div>
+            {linkingStatus.needsLink && linkingStatus.missingLinks.includes('graphId') && (
+              <div className="property-warning" style={{ background: '#fef3c7', color: '#92400e', padding: '8px', borderRadius: '4px', marginBottom: '12px' }}>
+                ⚠ Select a Graph to activate this tool. Use link mode on canvas or select from dropdown below.
+              </div>
+            )}
+            <div className="property-group">
+              <label className="property-label">Link to Graph</label>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <select
+                  value={object.graphId || ''}
+                  onChange={(e) => handleChange('graphId', e.target.value || null)}
+                  className="animation-select"
+                  style={{ flex: 1 }}
+                >
+                  <option value="">(none - select a graph)</option>
+                  {(scene?.objects || [])
+                    .filter(o => o.type === 'graph' && o.id !== object.id)
+                    .map(graph => (
+                      <option key={graph.id} value={graph.id}>
+                        {getObjectFullLabel(graph, scene?.objects || [])}
+                      </option>
+                    ))
+                  }
+                </select>
+                {object.graphId && onSelectObject && (
+                  <button
+                    onClick={() => onSelectObject(object.graphId)}
+                    title="Jump to linked graph"
+                    style={{ padding: '4px 8px', fontSize: '12px' }}
+                  >
+                    →
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="property-group">
+              <label className="property-label">Link to Axes (optional)</label>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <select
+                  value={object.axesId || ''}
+                  onChange={(e) => handleChange('axesId', e.target.value || null)}
+                  className="animation-select"
+                  style={{ flex: 1 }}
+                >
+                  <option value="">(none)</option>
+                  {(scene?.objects || [])
+                    .filter(o => o.type === 'axes' && o.id !== object.id)
+                    .map(axes => (
+                      <option key={axes.id} value={axes.id}>
+                        {getObjectFullLabel(axes, scene?.objects || [])}
+                      </option>
+                    ))
+                  }
+                </select>
+                {object.axesId && onSelectObject && (
+                  <button
+                    onClick={() => onSelectObject(object.axesId)}
+                    title="Jump to linked axes"
+                    style={{ padding: '4px 8px', fontSize: '12px' }}
+                  >
+                    →
+                  </button>
+                )}
+              </div>
+            </div>
+            {discontinuityWarning && (
+              <div className="property-warning" style={{ background: '#fee2e2', color: '#991b1b', padding: '8px', borderRadius: '4px', marginBottom: '12px' }}>
+                ⚠ {discontinuityWarning}
+              </div>
+            )}
+            <div className="property-section-title">Math</div>
+            <div className="property-group">
+              <label className="property-label">X Position (x0)</label>
+              <NumberInput
+                value={object.x0 ?? 0}
+                onChange={(val) => handleChange('x0', val)}
+                step={0.1}
+              />
+            </div>
+            <div className="property-section-title">Appearance</div>
+            <div className="property-group">
+              <label className="property-label">
+                <input
+                  type="checkbox"
+                  checked={object.showCrosshair ?? true}
+                  onChange={(e) => handleChange('showCrosshair', e.target.checked)}
+                />
+                Show Crosshair
+              </label>
+            </div>
+            <div className="property-group">
+              <label className="property-label">
+                <input
+                  type="checkbox"
+                  checked={object.showDot ?? true}
+                  onChange={(e) => handleChange('showDot', e.target.checked)}
+                />
+                Show Dot
+              </label>
+            </div>
+            <div className="property-group">
+              <label className="property-label">
+                <input
+                  type="checkbox"
+                  checked={object.showLabel ?? false}
+                  onChange={(e) => handleChange('showLabel', e.target.checked)}
+                />
+                Show Label
+              </label>
+            </div>
+          </>
+        )}
+
+        {object.type === 'tangentLine' && (
+          <>
+            <div className="property-section-title">Tangent Line</div>
+            {linkingStatus.needsLink && (
+              <div className="property-warning" style={{ background: '#fef3c7', color: '#92400e', padding: '8px', borderRadius: '4px', marginBottom: '12px' }}>
+                ⚠ Link to a Graph Cursor (preferred) or Graph to activate. Use link mode on canvas or select below.
+              </div>
+            )}
+            <div className="property-group">
+              <label className="property-label">Link to Graph</label>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <select
+                  value={object.graphId || ''}
+                  onChange={(e) => handleChange('graphId', e.target.value || null)}
+                  className="animation-select"
+                  style={{ flex: 1 }}
+                >
+                  <option value="">(none - select a graph)</option>
+                  {(scene?.objects || [])
+                    .filter(o => o.type === 'graph' && o.id !== object.id)
+                    .map(graph => (
+                      <option key={graph.id} value={graph.id}>
+                        {getObjectFullLabel(graph, scene?.objects || [])}
+                      </option>
+                    ))
+                  }
+                </select>
+                {object.graphId && onSelectObject && (
+                  <button
+                    onClick={() => onSelectObject(object.graphId)}
+                    title="Jump to linked graph"
+                    style={{ padding: '4px 8px', fontSize: '12px' }}
+                  >
+                    →
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="property-group">
+              <label className="property-label">Link to Cursor (preferred)</label>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <select
+                  value={object.cursorId || ''}
+                  onChange={(e) => handleChange('cursorId', e.target.value || null)}
+                  className="animation-select"
+                  style={{ flex: 1 }}
+                >
+                  <option value="">(none - use direct x0)</option>
+                  {(scene?.objects || [])
+                    .filter(o => o.type === 'graphCursor' && o.id !== object.id)
+                    .map(cursor => (
+                      <option key={cursor.id} value={cursor.id}>
+                        {getObjectFullLabel(cursor, scene?.objects || [])}
+                      </option>
+                    ))
+                  }
+                </select>
+                {object.cursorId && onSelectObject && (
+                  <button
+                    onClick={() => onSelectObject(object.cursorId)}
+                    title="Jump to linked cursor"
+                    style={{ padding: '4px 8px', fontSize: '12px' }}
+                  >
+                    →
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="property-group">
+              <label className="property-label">Link to Axes (optional)</label>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <select
+                  value={object.axesId || ''}
+                  onChange={(e) => handleChange('axesId', e.target.value || null)}
+                  className="animation-select"
+                  style={{ flex: 1 }}
+                >
+                  <option value="">(none)</option>
+                  {(scene?.objects || [])
+                    .filter(o => o.type === 'axes' && o.id !== object.id)
+                    .map(axes => (
+                      <option key={axes.id} value={axes.id}>
+                        {getObjectFullLabel(axes, scene?.objects || [])}
+                      </option>
+                    ))
+                  }
+                </select>
+                {object.axesId && onSelectObject && (
+                  <button
+                    onClick={() => onSelectObject(object.axesId)}
+                    title="Jump to linked axes"
+                    style={{ padding: '4px 8px', fontSize: '12px' }}
+                  >
+                    →
+                  </button>
+                )}
+              </div>
+            </div>
+            {!object.cursorId && (
+              <div className="property-group">
+                <label className="property-label">X Position (x0)</label>
+                <NumberInput
+                  value={object.x0 ?? 0}
+                  onChange={(val) => handleChange('x0', val)}
+                  step={0.1}
+                />
+              </div>
+            )}
+            <div className="property-group">
+              <label className="property-label">Derivative Step (h)</label>
+              <NumberInput
+                value={object.derivativeStep ?? 0.001}
+                onChange={(val) => handleChange('derivativeStep', val)}
+                step={0.0001}
+                min={0.0001}
+              />
+            </div>
+            <div className="property-group">
+              <label className="property-label">Visible Span</label>
+              <NumberInput
+                value={object.visibleSpan ?? 2}
+                onChange={(val) => handleChange('visibleSpan', val)}
+                step={0.1}
+                min={0.1}
+              />
+            </div>
+            <div className="property-group">
+              <label className="property-label">
+                <input
+                  type="checkbox"
+                  checked={object.showSlopeLabel ?? true}
+                  onChange={(e) => handleChange('showSlopeLabel', e.target.checked)}
+                />
+                Show Slope Label
+              </label>
+            </div>
+          </>
+        )}
+
+        {object.type === 'limitProbe' && (
+          <>
+            <div className="property-section-title">Limit Probe</div>
+            <div className="property-group">
+              <label className="property-label">Link to Graph</label>
+              <select
+                value={object.graphId || ''}
+                onChange={(e) => handleChange('graphId', e.target.value || null)}
+                className="animation-select"
+              >
+                <option value="">(none - select a graph)</option>
+                {(scene?.objects || [])
+                  .filter(o => o.type === 'graph' && o.id !== object.id)
+                  .map(graph => (
+                    <option key={graph.id} value={graph.id}>
+                      Graph: {graph.formula || 'f(x)'}
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+            <div className="property-group">
+              <label className="property-label">Link to Cursor (optional)</label>
+              <select
+                value={object.cursorId || ''}
+                onChange={(e) => handleChange('cursorId', e.target.value || null)}
+                className="animation-select"
+              >
+                <option value="">(none - use direct x0)</option>
+                {(scene?.objects || [])
+                  .filter(o => o.type === 'graphCursor' && o.id !== object.id)
+                  .map(cursor => (
+                    <option key={cursor.id} value={cursor.id}>
+                      Cursor at x={cursor.x0 ?? 0}
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+            <div className="property-group">
+              <label className="property-label">Link to Axes (optional)</label>
+              <select
+                value={object.axesId || ''}
+                onChange={(e) => handleChange('axesId', e.target.value || null)}
+                className="animation-select"
+              >
+                <option value="">(none)</option>
+                {(scene?.objects || [])
+                  .filter(o => o.type === 'axes' && o.id !== object.id)
+                  .map(axes => (
+                    <option key={axes.id} value={axes.id}>
+                      Axes at ({axes.x}, {axes.y})
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+            {!object.cursorId && (
+              <div className="property-group">
+                <label className="property-label">X Position (x0)</label>
+                <NumberInput
+                  value={object.x0 ?? 0}
+                  onChange={(val) => handleChange('x0', val)}
+                  step={0.1}
+                />
+              </div>
+            )}
+            <div className="property-group">
+              <label className="property-label">Direction</label>
+              <select
+                value={object.direction || 'both'}
+                onChange={(e) => handleChange('direction', e.target.value)}
+                className="animation-select"
+              >
+                <option value="left">Left only</option>
+                <option value="right">Right only</option>
+                <option value="both">Both</option>
+              </select>
+            </div>
+            <div className="property-group">
+              <label className="property-label">
+                <input
+                  type="checkbox"
+                  checked={object.showPoints ?? true}
+                  onChange={(e) => handleChange('showPoints', e.target.checked)}
+                />
+                Show Points
+              </label>
+            </div>
+            <div className="property-group">
+              <label className="property-label">
+                <input
+                  type="checkbox"
+                  checked={object.showArrow ?? true}
+                  onChange={(e) => handleChange('showArrow', e.target.checked)}
+                />
+                Show Arrows
+              </label>
+            </div>
+            <div className="property-group">
+              <label className="property-label">
+                <input
+                  type="checkbox"
+                  checked={object.showReadout ?? true}
+                  onChange={(e) => handleChange('showReadout', e.target.checked)}
+                />
+                Show Readout
+              </label>
+            </div>
+          </>
+        )}
+
+        {object.type === 'valueLabel' && (
+          <>
+            <div className="property-section-title">Value Label</div>
+            <div className="property-group">
+              <label className="property-label">Link to Graph (optional)</label>
+              <select
+                value={object.graphId || ''}
+                onChange={(e) => handleChange('graphId', e.target.value || null)}
+                className="animation-select"
+              >
+                <option value="">(none)</option>
+                {(scene?.objects || [])
+                  .filter(o => o.type === 'graph' && o.id !== object.id)
+                  .map(graph => (
+                    <option key={graph.id} value={graph.id}>
+                      Graph: {graph.formula || 'f(x)'}
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+            <div className="property-group">
+              <label className="property-label">Link to Cursor (optional)</label>
+              <select
+                value={object.cursorId || ''}
+                onChange={(e) => handleChange('cursorId', e.target.value || null)}
+                className="animation-select"
+              >
+                <option value="">(none)</option>
+                {(scene?.objects || [])
+                  .filter(o => o.type === 'graphCursor' && o.id !== object.id)
+                  .map(cursor => (
+                    <option key={cursor.id} value={cursor.id}>
+                      Cursor at x={cursor.x0 ?? 0}
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+            <div className="property-group">
+              <label className="property-label">Value Type</label>
+              <select
+                value={object.valueType || 'slope'}
+                onChange={(e) => handleChange('valueType', e.target.value)}
+                className="animation-select"
+              >
+                <option value="slope">Slope</option>
+                <option value="x">X Value</option>
+                <option value="y">Y Value</option>
+                <option value="custom">Custom Expression</option>
+              </select>
+            </div>
+            {object.valueType === 'custom' && (
+              <div className="property-group">
+                <label className="property-label">Custom Expression</label>
+                <input
+                  type="text"
+                  value={object.customExpression || ''}
+                  onChange={(e) => handleChange('customExpression', e.target.value)}
+                  placeholder="Enter custom text"
+                />
+              </div>
+            )}
+            <div className="property-group">
+              <label className="property-label">Label Prefix</label>
+              <input
+                type="text"
+                value={object.labelPrefix || ''}
+                onChange={(e) => handleChange('labelPrefix', e.target.value)}
+                placeholder="m = "
+              />
+            </div>
+            <div className="property-group">
+              <label className="property-label">Label Suffix</label>
+              <input
+                type="text"
+                value={object.labelSuffix || ''}
+                onChange={(e) => handleChange('labelSuffix', e.target.value)}
+                placeholder=""
+              />
+            </div>
+            <div className="property-group">
+              <label className="property-label">Font Size</label>
+              <NumberInput
+                value={object.fontSize ?? 24}
+                onChange={(val) => handleChange('fontSize', val)}
+                step={2}
+                min={8}
+                max={72}
+              />
+            </div>
+            <div className="property-group">
+              <label className="property-label">
+                <input
+                  type="checkbox"
+                  checked={object.showBackground ?? false}
+                  onChange={(e) => handleChange('showBackground', e.target.checked)}
+                />
+                Show Background
+              </label>
+            </div>
           </>
         )}
         
@@ -496,7 +1127,7 @@ function PropertiesPanel({
               style={{ padding: '4px 8px', cursor: 'pointer' }}
               title="Rotate -15°"
             >
-              ↺ -15°
+              -15°
             </button>
             <NumberInput
               value={object.rotation || 0}
@@ -508,7 +1139,7 @@ function PropertiesPanel({
               style={{ padding: '4px 8px', cursor: 'pointer' }}
               title="Rotate +15°"
             >
-              ↻ +15°
+              +15°
             </button>
           </div>
         </div>
@@ -570,7 +1201,7 @@ function PropertiesPanel({
         <div className="property-section-title">Animation</div>
         
         <div className="property-group">
-          <label className="property-label">Animation Type</label>
+          <label className="property-label">Entry Animation</label>
           <select
             value={object.animationType || 'auto'}
             onChange={(e) => handleChange('animationType', e.target.value)}
@@ -579,15 +1210,27 @@ function PropertiesPanel({
             <option value="auto">Auto</option>
             <option value="Create">Create</option>
             <option value="FadeIn">Fade In</option>
-            <option value="FadeOut">Fade Out</option>
             <option value="GrowFromCenter">Grow From Center</option>
             <option value="Write">Write</option>
             <option value="DrawBorderThenFill">Draw Border Then Fill</option>
-            <option value="ShowCreation">Show Creation</option>
-            <option value="SpinInFromNothing">Spin In</option>
+          </select>
+        </div>
+        
+        <div className="property-group">
+          <label className="property-label">Exit Animation</label>
+          <select
+            value={object.exitAnimationType || 'FadeOut'}
+            onChange={(e) => handleChange('exitAnimationType', e.target.value)}
+            className="animation-select"
+          >
+            <option value="FadeOut">Fade Out</option>
             <option value="Uncreate">Uncreate</option>
             <option value="Unwrite">Unwrite</option>
+            <option value="ShrinkToCenter">Shrink To Center</option>
           </select>
+          <div className="property-info">
+            Objects will automatically exit after their duration ends
+          </div>
         </div>
         
         <div className="property-row">

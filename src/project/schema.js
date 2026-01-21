@@ -32,6 +32,229 @@ export function createEmptyScene(name = 'New Scene') {
 }
 
 /**
+ * Create a demo scene showcasing composable graph tools
+ */
+export function createDemoScene() {
+  const sceneId = crypto.randomUUID()
+  
+  // Create axes
+  const axesId = crypto.randomUUID()
+  const axes = {
+    id: axesId,
+    type: 'axes',
+    x: 0,
+    y: 0,
+    xRange: { min: -5, max: 5, step: 1 },
+    yRange: { min: -3, max: 3, step: 1 },
+    xLength: 8,
+    yLength: 4,
+    stroke: '#ffffff',
+    strokeWidth: 2,
+    showTicks: true,
+    xLabel: 'x',
+    yLabel: 'y',
+    rotation: 0,
+    opacity: 1,
+    zIndex: 0,
+    keyframes: [],
+    runTime: 1,
+    delay: 0,
+    animationType: 'auto',
+    exitAnimationType: 'FadeOut'
+  }
+  
+  // Create graph
+  const graphId = crypto.randomUUID()
+  const graph = {
+    id: graphId,
+    type: 'graph',
+    x: 0,
+    y: 0,
+    formula: 'x^2',
+    xRange: { min: -5, max: 5 },
+    yRange: { min: -3, max: 3 },
+    stroke: '#4ade80',
+    strokeWidth: 3,
+    axesId: axesId,
+    rotation: 0,
+    opacity: 1,
+    zIndex: 0,
+    keyframes: [],
+    runTime: 1,
+    delay: 0.5,
+    animationType: 'auto',
+    exitAnimationType: 'FadeOut'
+  }
+  
+  // Create graph cursor
+  const cursorId = crypto.randomUUID()
+  const cursor = {
+    id: cursorId,
+    type: 'graphCursor',
+    x: 1,
+    y: 1,
+    x0: 1,
+    graphId: graphId,
+    axesId: axesId,
+    showCrosshair: true,
+    showDot: true,
+    showLabel: false,
+    labelFormat: '({x0}, {y0})',
+    fill: '#e94560',
+    radius: 0.08,
+    opacity: 1,
+    zIndex: 1,
+    keyframes: [],
+    runTime: 1,
+    delay: 1,
+    animationType: 'auto',
+    exitAnimationType: 'FadeOut'
+  }
+  
+  // Create tangent line
+  const tangentId = crypto.randomUUID()
+  const tangent = {
+    id: tangentId,
+    type: 'tangentLine',
+    x: 0,
+    y: 0,
+    graphId: graphId,
+    cursorId: cursorId,
+    axesId: axesId,
+    derivativeStep: 0.001,
+    visibleSpan: 2,
+    showSlopeLabel: true,
+    slopeLabelOffset: 0.5,
+    stroke: '#fbbf24',
+    strokeWidth: 2,
+    opacity: 1,
+    zIndex: 1,
+    keyframes: [],
+    runTime: 1,
+    delay: 1.5,
+    animationType: 'auto',
+    exitAnimationType: 'FadeOut'
+  }
+  
+  // Create value label for slope
+  const labelId = crypto.randomUUID()
+  const label = {
+    id: labelId,
+    type: 'valueLabel',
+    x: 2,
+    y: 2.5,
+    graphId: graphId,
+    cursorId: cursorId,
+    valueType: 'slope',
+    customExpression: '',
+    labelPrefix: 'm = ',
+    labelSuffix: '',
+    fontSize: 32,
+    fill: '#ffffff',
+    showBackground: true,
+    backgroundFill: '#000000',
+    backgroundOpacity: 0.7,
+    opacity: 1,
+    zIndex: 2,
+    keyframes: [],
+    runTime: 1,
+    delay: 2,
+    animationType: 'auto',
+    exitAnimationType: 'FadeOut'
+  }
+  
+  // Add a second demo: limit probe example
+  const limitGraphId = crypto.randomUUID()
+  const limitGraph = {
+    id: limitGraphId,
+    type: 'graph',
+    x: 0,
+    y: -2,
+    formula: '(x^2 - 1)/(x - 1)',
+    xRange: { min: -3, max: 3 },
+    yRange: { min: -3, max: 3 },
+    stroke: '#3b82f6',
+    strokeWidth: 3,
+    axesId: axesId,
+    rotation: 0,
+    opacity: 1,
+    zIndex: 0,
+    keyframes: [],
+    runTime: 1,
+    delay: 0.5,
+    animationType: 'auto',
+    exitAnimationType: 'FadeOut'
+  }
+  
+  const limitCursorId = crypto.randomUUID()
+  const limitCursor = {
+    id: limitCursorId,
+    type: 'graphCursor',
+    x: 1,
+    y: 0,
+    x0: 0.9999, // Slightly offset to avoid division by zero, but close enough to show the limit
+    graphId: limitGraphId,
+    axesId: axesId,
+    showCrosshair: true,
+    showDot: true,
+    showLabel: false,
+    labelFormat: '({x0}, {y0})',
+    fill: '#8b5cf6',
+    radius: 0.08,
+    opacity: 1,
+    zIndex: 1,
+    keyframes: [],
+    runTime: 1,
+    delay: 2.5,
+    animationType: 'auto',
+    exitAnimationType: 'FadeOut'
+  }
+  
+  const limitProbeId = crypto.randomUUID()
+  const limitProbe = {
+    id: limitProbeId,
+    type: 'limitProbe',
+    x: 1,
+    y: 0,
+    x0: 1, // Probe approaches 1, which is fine - the function handles this
+    graphId: limitGraphId,
+    cursorId: limitCursorId,
+    axesId: axesId,
+    direction: 'both',
+    deltaSchedule: [1, 0.5, 0.1, 0.01],
+    showReadout: true,
+    showPoints: true,
+    showArrow: true,
+    fill: '#3b82f6',
+    radius: 0.06,
+    opacity: 1,
+    zIndex: 1,
+    keyframes: [],
+    runTime: 1,
+    delay: 3,
+    animationType: 'auto',
+    exitAnimationType: 'FadeOut'
+  }
+  
+  return {
+    id: sceneId,
+    name: 'Graph Tools Demo',
+    duration: 5,
+    objects: [
+      axes,
+      graph,
+      cursor,
+      tangent,
+      label,
+      limitGraph,
+      limitCursor,
+      limitProbe
+    ],
+    animations: []
+  }
+}
+
+/**
  * Validate and migrate project data
  */
 export function validateProject(data) {
@@ -66,6 +289,11 @@ export function validateProject(data) {
     'text',
     'latex',
     'axes',
+    'graph',
+    'graphCursor',
+    'tangentLine',
+    'limitProbe',
+    'valueLabel',
   ])
 
   data.scenes = data.scenes.map(scene => {

@@ -84,6 +84,39 @@ ManimInteractive/
 - Polygon (regular n-gon)
 - Text
 - LaTeX (MathTex)
+- Axes (with customizable labels)
+- Graph (function plotting with Desmos-style input)
+
+### Composable Graph Tools
+
+The app includes composable building blocks for teaching calculus concepts. These tools can be combined to create interactive demonstrations of limits and derivatives.
+
+#### Available Tools
+
+- **Graph Cursor**: A draggable point constrained to a graph. Link it to a graph object and drag it along the curve.
+- **Tangent Line**: Renders the tangent line at a point on the graph. Can link to a Graph Cursor to follow it, or use a direct x-coordinate.
+- **Limit Probe**: Visualizes approaching a point from the left/right with approach points and arrows. Shows numeric readouts comparing function values and limit estimates.
+- **Value Label**: Displays computed values like slope, x/y coordinates, or custom expressions. Can link to a Graph Cursor to show dynamic values.
+
+#### Example Recipes
+
+**Demonstrating Derivatives:**
+
+1. Add an **Axes** object
+2. Add a **Graph** object with a function like `x^2` or `sin(x)`, and link it to the axes
+3. Add a **Graph Cursor** and link it to the graph (and optionally the axes)
+4. Add a **Tangent Line** and link it to the graph cursor (it will automatically follow the cursor)
+5. Optionally add a **Value Label** linked to the cursor to display the slope dynamically
+
+**Demonstrating Limits:**
+
+1. Add an **Axes** object
+2. Add a **Graph** object with a function that has interesting limit behavior, e.g., `(x^2 - 1)/(x - 1)`
+3. Add a **Graph Cursor** positioned at the limit point (x = 1 in this example)
+4. Add a **Limit Probe** linked to the graph cursor, set direction to "both" to show approaching from left and right
+5. The limit probe will show approach points and readouts indicating whether the limit exists
+
+**Key Concept**: These are not single "calculus mode" buttons. Instead, you build demonstrations by combining multiple composable tools. Each tool can be animated independently on the timeline, giving you full control over the pacing and presentation of mathematical concepts.
 
 ## License
 

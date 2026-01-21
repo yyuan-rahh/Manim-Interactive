@@ -101,7 +101,7 @@ function SceneList({
                 }}
                 title="Duplicate"
               >
-                ⎘
+                Dup
               </button>
               {scenes.length > 1 && (
                 <button

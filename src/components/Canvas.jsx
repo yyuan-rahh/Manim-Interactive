@@ -1414,6 +1414,18 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       return [] // These use vertex handles instead
     }
     
+    // For graphs, use edge midpoint handles instead of corners
+    if (obj.type === 'graph') {
+      const midX = topLeft.x + size.width / 2
+      const midY = topLeft.y + size.height / 2
+      return [
+        { id: 'left', x: topLeft.x, y: midY },
+        { id: 'right', x: topLeft.x + size.width, y: midY },
+        { id: 'top', x: midX, y: topLeft.y },
+        { id: 'bottom', x: midX, y: topLeft.y + size.height },
+      ]
+    }
+    
     return [
       { id: 'nw', x: topLeft.x - 4, y: topLeft.y - 4 },
       { id: 'ne', x: topLeft.x + size.width + 4, y: topLeft.y - 4 },
@@ -1515,23 +1527,17 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         }
         }
       case 'graph': {
-        // Sample the function to get bounds
-        const formula = obj.formula || 'x^2'
+        // Use the graph's range to define tight bounds
         const xMin = obj.xRange?.min ?? -5
         const xMax = obj.xRange?.max ?? 5
-        const points = mathParser.sampleFunction(formula, xMin, xMax, 100)
+        const yMin = obj.yRange?.min ?? -3
+        const yMax = obj.yRange?.max ?? 3
         
-        if (points.length === 0) {
-          return { minX: obj.x - 1, maxX: obj.x + 1, minY: obj.y - 1, maxY: obj.y + 1 }
-        }
-        
-        const xs = points.map(p => obj.x + p.x)
-        const ys = points.map(p => obj.y + p.y)
         return {
-          minX: Math.min(...xs),
-          maxX: Math.max(...xs),
-          minY: Math.min(...ys),
-          maxY: Math.max(...ys)
+          minX: obj.x + xMin,
+          maxX: obj.x + xMax,
+          minY: obj.y + yMin,
+          maxY: obj.y + yMax
         }
       }
       default:
@@ -2337,6 +2343,52 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     } else if (dragType === 'resize') {
       const obj = scene.objects.find(o => o.id === selectedObjectId)
       if (!obj) return
+      
+      // Handle graph edge dragging to adjust xRange/yRange
+      if (obj.type === 'graph' && (activeHandle === 'left' || activeHandle === 'right' || activeHandle === 'top' || activeHandle === 'bottom')) {
+        const xRange = dragOffset.xRange || obj.xRange || { min: -5, max: 5 }
+        const yRange = dragOffset.yRange || obj.yRange || { min: -3, max: 3 }
+        
+        let newXRange = { ...xRange }
+        let newYRange = { ...yRange }
+        
+        if (activeHandle === 'left') {
+          // Dragging left edge: adjust xMin
+          newXRange.min = parseFloat((xRange.min + dx).toFixed(2))
+          // Ensure min stays less than max
+          if (newXRange.min >= xRange.max - 0.5) {
+            newXRange.min = xRange.max - 0.5
+          }
+        } else if (activeHandle === 'right') {
+          // Dragging right edge: adjust xMax
+          newXRange.max = parseFloat((xRange.max + dx).toFixed(2))
+          // Ensure max stays greater than min
+          if (newXRange.max <= xRange.min + 0.5) {
+            newXRange.max = xRange.min + 0.5
+          }
+        } else if (activeHandle === 'top') {
+          // Dragging top edge: adjust yMax (note: dy is inverted)
+          newYRange.max = parseFloat((yRange.max + dy).toFixed(2))
+          // Ensure max stays greater than min
+          if (newYRange.max <= yRange.min + 0.5) {
+            newYRange.max = yRange.min + 0.5
+          }
+        } else if (activeHandle === 'bottom') {
+          // Dragging bottom edge: adjust yMin
+          newYRange.min = parseFloat((yRange.min + dy).toFixed(2))
+          // Ensure min stays less than max
+          if (newYRange.min >= yRange.max - 0.5) {
+            newYRange.min = yRange.max - 0.5
+          }
+        }
+        
+        onUpdateObject(selectedObjectId, {
+          xRange: newXRange,
+          yRange: newYRange
+        })
+        setDragOffset({ ...dragOffset, xRange: newXRange, yRange: newYRange })
+        return
+      }
       
       // Handle triangle vertex dragging
       if (obj.type === 'triangle' && activeHandle?.startsWith('vertex-')) {

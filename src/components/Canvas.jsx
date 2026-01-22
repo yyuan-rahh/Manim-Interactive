@@ -2124,7 +2124,17 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         setDragType('move')
         setActiveHandle(null)
         setDragStart({ x: e.clientX, y: e.clientY })
-        setDragOffset({ ...obj })
+        // Store original state for graphs (to calculate transformations)
+        if (obj.type === 'graph') {
+          setDragOffset({ 
+            ...obj,
+            baseFormula: obj.formula,  // Store original formula
+            xRange: { ...obj.xRange },
+            yRange: { ...obj.yRange }
+          })
+        } else {
+          setDragOffset({ ...obj })
+        }
       }
     }
   }
@@ -2259,6 +2269,64 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
             x: offsetX + point.x,
             y: (axes || graph).y + point.y
           })
+        }
+      } else if (obj.type === 'graph') {
+        // Special handling for graph: transform formula and shift range
+        const rawX = dragOffset.x + dx
+        const rawY = dragOffset.y + dy
+        const snapped = snapPosition(rawX, rawY, selectedObjectId)
+        
+        // Calculate the shift from original position
+        const shiftX = snapped.x - dragOffset.x
+        const shiftY = snapped.y - dragOffset.y
+        
+        // Only update if there's actually a shift
+        if (Math.abs(shiftX) > 0.01 || Math.abs(shiftY) > 0.01) {
+          // Get original formula (stored in dragOffset or current obj)
+          const baseFormula = dragOffset.baseFormula || obj.formula || 'x^2'
+          
+          // Transform formula: horizontal shift by -shiftX, vertical shift by +shiftY
+          // f(x) -> f(x - shiftX) + shiftY
+          let transformedFormula = baseFormula
+          
+          // Apply horizontal shift: x -> (x - shiftX)
+          if (Math.abs(shiftX) > 0.01) {
+            // Wrap the formula and replace x with (x - shiftX)
+            const shift = shiftX > 0 ? `-${Math.abs(shiftX).toFixed(2)}` : `+${Math.abs(shiftX).toFixed(2)}`
+            // For simple formulas like x^2, x^3, etc., wrap properly
+            if (baseFormula.includes('x')) {
+              transformedFormula = baseFormula.replace(/x/g, `(x${shift})`)
+            }
+          }
+          
+          // Apply vertical shift: add shiftY
+          if (Math.abs(shiftY) > 0.01) {
+            const shift = shiftY > 0 ? `+${shiftY.toFixed(2)}` : `${shiftY.toFixed(2)}`
+            transformedFormula = `(${transformedFormula})${shift}`
+          }
+          
+          // Shift the xRange and yRange
+          const xRange = dragOffset.xRange || obj.xRange || { min: -5, max: 5 }
+          const yRange = dragOffset.yRange || obj.yRange || { min: -3, max: 3 }
+          
+          const newXRange = {
+            min: parseFloat((xRange.min + shiftX).toFixed(2)),
+            max: parseFloat((xRange.max + shiftX).toFixed(2))
+          }
+          
+          const newYRange = {
+            min: parseFloat((yRange.min + shiftY).toFixed(2)),
+            max: parseFloat((yRange.max + shiftY).toFixed(2))
+          }
+          
+          onUpdateObject(selectedObjectId, {
+            ...snapped,
+            formula: transformedFormula,
+            xRange: newXRange,
+            yRange: newYRange
+          })
+        } else {
+          onUpdateObject(selectedObjectId, snapped)
         }
       } else {
       const rawX = dragOffset.x + dx

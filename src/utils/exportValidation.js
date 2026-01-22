@@ -19,9 +19,15 @@ export function validateScene(scene) {
     return issues
   }
   
+  try {
   // Check for missing links in tool objects
   scene.objects.forEach(obj => {
-    const linkingStatus = getLinkingStatus(obj)
+    let linkingStatus
+    try {
+      linkingStatus = getLinkingStatus(obj)
+    } catch (e) {
+      return
+    }
     
     if (linkingStatus.needsLink) {
       const missingLinks = linkingStatus.missingLinks.join(', ')
@@ -34,31 +40,42 @@ export function validateScene(scene) {
     
     // Check for potential undefined evaluations
     if (obj.type === 'graphCursor' && obj.graphId) {
-      const graph = scene.objects.find(o => o.id === obj.graphId)
-      if (graph && graph.formula && obj.x0 !== undefined) {
-        const y = evalAt(graph.formula, obj.x0)
-        if (isNaN(y) || !isFinite(y)) {
-          issues.push({
-            level: 'warning',
-            message: `${obj.name || 'Graph Cursor'} may be at an undefined point (x = ${obj.x0})`,
-            objectId: obj.id
-          })
+      try {
+        const graph = scene.objects.find(o => o.id === obj.graphId)
+        if (graph && graph.formula && obj.x0 !== undefined) {
+          const y = evalAt(graph.formula, obj.x0)
+          if (isNaN(y) || !isFinite(y)) {
+            issues.push({
+              level: 'warning',
+              message: `${obj.name || 'Graph Cursor'} may be at an undefined point (x = ${obj.x0})`,
+              objectId: obj.id
+            })
+          }
         }
+      } catch (e) {
+        /* ignore */
       }
     }
     
     // Check for invalid formulas
     if (obj.type === 'graph' && obj.formula) {
-      const validation = mathParser.validate(obj.formula)
-      if (!validation.valid) {
-        issues.push({
-          level: 'error',
-          message: `Graph "${obj.name || 'unnamed'}" has invalid formula: ${validation.error}`,
-          objectId: obj.id
-        })
+      try {
+        const validation = mathParser.validate(obj.formula)
+        if (!validation.valid) {
+          issues.push({
+            level: 'error',
+            message: `Graph "${obj.name || 'unnamed'}" has invalid formula: ${validation.error}`,
+            objectId: obj.id
+          })
+        }
+      } catch (e) {
+        /* ignore */
       }
     }
   })
+  } catch (e) {
+    /* avoid validation crashing the app */
+  }
   
   return issues
 }

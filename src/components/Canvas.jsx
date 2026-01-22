@@ -193,7 +193,10 @@ const getVisibleObjectsAtTime = (objects, t) => {
 function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUpdateObject, onAddObject, onDuplicateObject, onDeleteObject }) {
   const canvasRef = useRef(null)
   const containerRef = useRef(null)
+  const canvasWrapperRef = useRef(null)
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 450 })
+  const MIN_CANVAS_WIDTH = 320
+  const MIN_CANVAS_HEIGHT = 180
   const [isDragging, setIsDragging] = useState(false)
   const [dragType, setDragType] = useState(null) // 'move' | 'resize-corner' | 'resize-edge' | 'endpoint'
   const [activeHandle, setActiveHandle] = useState(null) // which handle is being dragged
@@ -288,17 +291,19 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     }
   }, [scaleY])
 
-  // Resize canvas to fit container while maintaining 16:9 aspect
+  // Resize canvas to fit the canvas-wrapper (actual drawing area) while maintaining 16:9 aspect
   useEffect(() => {
     const updateSize = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect()
+      const el = canvasWrapperRef.current || containerRef.current
+      if (el) {
+        const rect = el.getBoundingClientRect()
         const aspect = 16 / 9
-        let width = rect.width - 40
-        let height = width / aspect
-        if (height > rect.height - 40) {
-          height = rect.height - 40
-          width = height * aspect
+        const padding = canvasWrapperRef.current ? 0 : 40
+        let width = Math.max(MIN_CANVAS_WIDTH, rect.width - padding)
+        let height = Math.max(MIN_CANVAS_HEIGHT, width / aspect)
+        if (height > rect.height - padding) {
+          height = Math.max(MIN_CANVAS_HEIGHT, rect.height - padding)
+          width = Math.max(MIN_CANVAS_WIDTH, height * aspect)
         }
         setCanvasSize({ width, height })
       }
@@ -306,6 +311,33 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     updateSize()
     window.addEventListener('resize', updateSize)
     return () => window.removeEventListener('resize', updateSize)
+  }, [])
+
+  // Observe canvas-wrapper for size changes (e.g. panel resize) so we re-fit the canvas
+  useEffect(() => {
+    const wrapper = canvasWrapperRef.current
+    if (!wrapper || typeof ResizeObserver === 'undefined') return
+    const updateSize = () => {
+      const rect = wrapper.getBoundingClientRect()
+      const pad = 40
+      const w = Math.max(0, rect.width - pad)
+      const h = Math.max(0, rect.height - pad)
+      if (w <= 0 || h <= 0) return
+      const aspect = 16 / 9
+      let width = Math.max(MIN_CANVAS_WIDTH, w)
+      let height = Math.max(MIN_CANVAS_HEIGHT, width / aspect)
+      if (height > h) {
+        height = Math.max(MIN_CANVAS_HEIGHT, h)
+        width = Math.max(MIN_CANVAS_WIDTH, height * aspect)
+      }
+      setCanvasSize(s => {
+        if (s.width === width && s.height === height) return s
+        return { width, height }
+      })
+    }
+    const ro = new ResizeObserver(updateSize)
+    ro.observe(wrapper)
+    return () => ro.disconnect()
   }, [])
 
   useEffect(() => {
@@ -340,6 +372,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
   // Draw the scene
   useEffect(() => {
     const canvas = canvasRef.current
+    if (!canvas) return
     const ctx = canvas.getContext('2d')
     
     // Clear and draw background
@@ -676,9 +709,12 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         const yMin = axes?.yRange?.min ?? obj.yRange?.min ?? -3
         const yMax = axes?.yRange?.max ?? obj.yRange?.max ?? 3
         
-        // Sample the function
-        const samples = 200
-        const points = mathParser.sampleFunction(formula, xMin, xMax, samples)
+        let points = []
+        try {
+          points = mathParser.sampleFunction(formula, xMin, xMax, 200)
+        } catch (_) {
+          /* skip graph if formula invalid */
+        }
         
         if (points.length > 1) {
           ctx.strokeStyle = stroke
@@ -691,16 +727,15 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
             // Skip points outside y range
             if (point.y < yMin || point.y > yMax) return
             
-            // Convert from math coords to canvas coords (relative to obj.x, obj.y)
-            // The graph's (x,y) is the origin of its coordinate system
-            const canvasX = point.x * scaleX
-            const canvasY = -point.y * scaleY
+            // Local coords (we're already translated to obj.x, obj.y): scale math units to pixels
+            const px = point.x * scaleX
+            const py = -point.y * scaleY
             
             if (isFirstPoint) {
-              ctx.moveTo(canvasX, canvasY)
+              ctx.moveTo(px, py)
               isFirstPoint = false
             } else {
-              ctx.lineTo(canvasX, canvasY)
+              ctx.lineTo(px, py)
             }
           })
           
@@ -2546,7 +2581,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         </div>
       )}
       
-      <div className="canvas-wrapper">
+      <div className="canvas-wrapper" ref={canvasWrapperRef}>
         <div className="canvas-stage" style={{ width: canvasSize.width, height: canvasSize.height }}>
         <canvas
           ref={canvasRef}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import './PropertiesPanel.css'
 import DesmosMathField from './DesmosMathField'
-import { getObjectFullLabel, getObjectDisplayName, getLinkingStatus } from '../utils/objectLabel'
+import { getObjectFullLabel, getObjectDisplayName } from '../utils/objectLabel'
 import { getLinkingStatus as getLinkingStatusHelper } from '../utils/linking'
 import { mathParser } from '../utils/mathParser'
 

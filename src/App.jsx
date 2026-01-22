@@ -244,6 +244,28 @@ function App() {
       if (!newObject.name) {
         newObject.name = generateObjectName(newObject, existingObjects)
       }
+      
+      // Auto-link graphs to existing axes if not already linked
+      if (newObject.type === 'graph' && !newObject.axesId) {
+        const existingAxes = existingObjects.find(o => o.type === 'axes')
+        if (existingAxes) {
+          newObject.axesId = existingAxes.id
+          // Position graph at axes origin
+          newObject.x = existingAxes.x
+          newObject.y = existingAxes.y
+        }
+      }
+      
+      // Auto-link graph tools to existing graphs
+      if (['graphCursor', 'tangentLine', 'limitProbe', 'valueLabel'].includes(newObject.type)) {
+        if (!newObject.graphId) {
+          const existingGraph = existingObjects.find(o => o.type === 'graph')
+          if (existingGraph) {
+            newObject.graphId = existingGraph.id
+          }
+        }
+      }
+      
       setProject(prev => ({
         ...prev,
         scenes: prev.scenes.map(s => 

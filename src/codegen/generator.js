@@ -346,8 +346,16 @@ function generateObjectCreation(obj, varName, objects = []) {
       
       if (linkedAxes) {
         const axesVarName = `obj_${objects.indexOf(linkedAxes)}`
+        const axesIndex = objects.indexOf(linkedAxes)
         // Since axes are now VGroups with labels, reference the actual Axes object (first element)
-        return `${varName} = ${axesVarName}[0].plot(lambda x: ${pythonFormula}, x_range=[${xMin}, ${xMax}], color=${stroke}, stroke_width=${strokeWidth})`
+        // If graph has an offset from axes, apply it
+        const offsetX = obj.x - linkedAxes.x
+        const offsetY = obj.y - linkedAxes.y
+        if (offsetX !== 0 || offsetY !== 0) {
+          return `${varName} = ${axesVarName}[0].plot(lambda x: ${pythonFormula}, x_range=[${xMin}, ${xMax}], color=${stroke}, stroke_width=${strokeWidth}).shift(np.array([${offsetX}, ${offsetY}, 0]))`
+        } else {
+          return `${varName} = ${axesVarName}[0].plot(lambda x: ${pythonFormula}, x_range=[${xMin}, ${xMax}], color=${stroke}, stroke_width=${strokeWidth})`
+        }
       } else {
         // Create independent axes and graph - use VGroup to combine them
         const axesVarName = `${varName}_axes`

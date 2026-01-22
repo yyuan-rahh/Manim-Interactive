@@ -488,6 +488,39 @@ function PropertiesPanel({
 
         {object.type === 'graph' && (
           <>
+            <div className="property-section-title">Linking</div>
+            <div className="property-group">
+              <label className="property-label">Link to Axes</label>
+              <select
+                value={object.axesId || ''}
+                onChange={(e) => handleChange('axesId', e.target.value || null)}
+                className="animation-select"
+              >
+                <option value="">(none - creates own axes)</option>
+                {(scene?.objects || [])
+                  .filter(o => o.type === 'axes' && o.id !== object.id)
+                  .map(axes => {
+                    const label = getObjectFullLabel(axes, scene?.objects || [])
+                    return (
+                      <option key={axes.id} value={axes.id}>
+                        {label}
+                      </option>
+                    )
+                  })
+                }
+              </select>
+              {object.axesId && (
+                <div className="property-info" style={{ color: '#4ade80', marginTop: '4px' }}>
+                  ✓ Linked to axes. Moving this graph shifts it relative to the axes origin.
+                </div>
+              )}
+              {!object.axesId && (
+                <div className="property-info" style={{ color: '#fbbf24', marginTop: '4px' }}>
+                  ⚠ Graph will create its own axes when rendered. Link to existing axes to use only one set.
+                </div>
+              )}
+            </div>
+            
             <div className="property-section-title">Math</div>
             <div className="property-group">
               <label className="property-label">Function f(x)</label>

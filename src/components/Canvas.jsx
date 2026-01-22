@@ -1142,9 +1142,9 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     // Highlight linked targets when selected object is a tool
     if (!isSelected && selectedObjectId && selectedObject) {
       const isLinkedTarget = 
-        (object.type === 'graph' && selectedObject.graphId === object.id) ||
-        (object.type === 'graphCursor' && (selectedObject.cursorId === object.id || selectedObject.graphId === object.graphId)) ||
-        (object.type === 'axes' && (selectedObject.axesId === object.id || selectedObject.graphId && scene?.objects?.find(o => o.id === selectedObject.graphId)?.axesId === object.id))
+        (obj.type === 'graph' && selectedObject.graphId === obj.id) ||
+        (obj.type === 'graphCursor' && (selectedObject.cursorId === obj.id || selectedObject.graphId === obj.graphId)) ||
+        (obj.type === 'axes' && (selectedObject.axesId === obj.id || selectedObject.graphId && scene?.objects?.find(o => o.id === selectedObject.graphId)?.axesId === obj.id))
       
       if (isLinkedTarget) {
         ctx.save()

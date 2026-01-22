@@ -1527,17 +1527,44 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         }
         }
       case 'graph': {
-        // Use the graph's range to define tight bounds
+        // Sample the actual curve to get tight bounds around the green line
+        const formula = obj.formula || 'x^2'
         const xMin = obj.xRange?.min ?? -5
         const xMax = obj.xRange?.max ?? 5
         const yMin = obj.yRange?.min ?? -3
         const yMax = obj.yRange?.max ?? 3
         
-        return {
-          minX: obj.x + xMin,
-          maxX: obj.x + xMax,
-          minY: obj.y + yMin,
-          maxY: obj.y + yMax
+        try {
+          const points = mathParser.sampleFunction(formula, xMin, xMax, 100)
+          
+          if (points.length === 0) {
+            return { minX: obj.x + xMin, maxX: obj.x + xMax, minY: obj.y + yMin, maxY: obj.y + yMax }
+          }
+          
+          // Find actual min/max of the curve (filtering points within yRange)
+          const visiblePoints = points.filter(p => p.y >= yMin && p.y <= yMax)
+          
+          if (visiblePoints.length === 0) {
+            return { minX: obj.x + xMin, maxX: obj.x + xMax, minY: obj.y + yMin, maxY: obj.y + yMax }
+          }
+          
+          const curveYMin = Math.min(...visiblePoints.map(p => p.y))
+          const curveYMax = Math.max(...visiblePoints.map(p => p.y))
+          const curveXMin = Math.min(...visiblePoints.map(p => p.x))
+          const curveXMax = Math.max(...visiblePoints.map(p => p.x))
+          
+          // Add small padding
+          const padding = 0.2
+          
+          return {
+            minX: obj.x + curveXMin - padding,
+            maxX: obj.x + curveXMax + padding,
+            minY: obj.y + curveYMin - padding,
+            maxY: obj.y + curveYMax + padding
+          }
+        } catch (_) {
+          // Fallback if formula is invalid
+          return { minX: obj.x + xMin, maxX: obj.x + xMax, minY: obj.y + yMin, maxY: obj.y + yMax }
         }
       }
       default:

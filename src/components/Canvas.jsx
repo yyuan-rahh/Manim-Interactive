@@ -30,7 +30,7 @@ const SHAPE_PALETTE = [
 const MANIM_WIDTH = 14
 const MANIM_HEIGHT = 8
 
-const HANDLE_SIZE = 10
+const HANDLE_SIZE = 12
 
 // Snapping constants
 const SNAP_THRESHOLD = 0.08 // Manim units - grid/axis snapping (reduced from 0.15)
@@ -1269,6 +1269,16 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           ctx.strokeRect(-w/2 - pad, -h/2 - pad, w + pad*2, h + pad*2)
           break
         }
+        case 'graph': {
+          // Draw tight bounding rectangle around the visible curve
+          const bounds = getObjectBounds(obj)
+          const topLeft = manimToCanvas(bounds.minX, bounds.maxY)
+          const bottomRight = manimToCanvas(bounds.maxX, bounds.minY)
+          ctx.strokeRect(topLeft.x - pad, topLeft.y - pad, 
+                        bottomRight.x - topLeft.x + pad*2, 
+                        bottomRight.y - topLeft.y + pad*2)
+          break
+        }
         default: {
           // Fallback to bounding box for latex
           ctx.translate(pos.x, pos.y)
@@ -1390,6 +1400,20 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         ctx.fill()
       } else if (obj.type === 'circle') {
         // Draw corner resize handles at bounding box corners for circles only
+        ctx.fillStyle = '#e94560'
+        const bounds = getObjectBounds(obj)
+        const topLeft = manimToCanvas(bounds.minX, bounds.maxY)
+        const bottomRight = manimToCanvas(bounds.maxX, bounds.minY)
+        const size = {
+          width: bottomRight.x - topLeft.x,
+          height: bottomRight.y - topLeft.y
+        }
+        const handles = getHandles(obj, topLeft, size)
+        handles.forEach(handle => {
+          ctx.fillRect(handle.x - HANDLE_SIZE/2, handle.y - HANDLE_SIZE/2, HANDLE_SIZE, HANDLE_SIZE)
+        })
+      } else if (obj.type === 'graph') {
+        // Draw midpoint handles for graph objects to resize xRange/yRange
         ctx.fillStyle = '#e94560'
         const bounds = getObjectBounds(obj)
         const topLeft = manimToCanvas(bounds.minX, bounds.maxY)
@@ -1535,35 +1559,43 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         const yMax = obj.yRange?.max ?? 3
         
         try {
-          const points = mathParser.sampleFunction(formula, xMin, xMax, 100)
+          const points = mathParser.sampleFunction(formula, xMin, xMax, 200)
           
           if (points.length === 0) {
             return { minX: obj.x + xMin, maxX: obj.x + xMax, minY: obj.y + yMin, maxY: obj.y + yMax }
           }
           
-          // Find actual min/max of the curve (filtering points within yRange)
-          const visiblePoints = points.filter(p => p.y >= yMin && p.y <= yMax)
+          // Filter to only points within the visible range
+          const visiblePoints = points.filter(p => {
+            return p.x >= xMin && p.x <= xMax && 
+                   !isNaN(p.y) && isFinite(p.y) &&
+                   p.y >= yMin && p.y <= yMax
+          })
           
           if (visiblePoints.length === 0) {
             return { minX: obj.x + xMin, maxX: obj.x + xMax, minY: obj.y + yMin, maxY: obj.y + yMax }
           }
           
+          // Get actual bounds of the visible curve
           const curveYMin = Math.min(...visiblePoints.map(p => p.y))
           const curveYMax = Math.max(...visiblePoints.map(p => p.y))
           const curveXMin = Math.min(...visiblePoints.map(p => p.x))
           const curveXMax = Math.max(...visiblePoints.map(p => p.x))
           
-          // Add small padding
-          const padding = 0.2
+          // Add padding for visibility
+          const paddingX = (curveXMax - curveXMin) * 0.05 + 0.1
+          const paddingY = (curveYMax - curveYMin) * 0.05 + 0.1
           
+          // Return bounds in absolute Manim coordinates
           return {
-            minX: obj.x + curveXMin - padding,
-            maxX: obj.x + curveXMax + padding,
-            minY: obj.y + curveYMin - padding,
-            maxY: obj.y + curveYMax + padding
+            minX: obj.x + curveXMin - paddingX,
+            maxX: obj.x + curveXMax + paddingX,
+            minY: obj.y + curveYMin - paddingY,
+            maxY: obj.y + curveYMax + paddingY
           }
-        } catch (_) {
+        } catch (e) {
           // Fallback if formula is invalid
+          console.error('Graph bounds error:', e)
           return { minX: obj.x + xMin, maxX: obj.x + xMax, minY: obj.y + yMin, maxY: obj.y + yMax }
         }
       }

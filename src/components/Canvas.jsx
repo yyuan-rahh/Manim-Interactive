@@ -2278,13 +2278,13 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         }
       } else if (obj.type === 'graph') {
         // Special handling for graph: transform formula and shift range
+        // Don't move obj.x and obj.y - keep graph centered at origin
         const rawX = dragOffset.x + dx
         const rawY = dragOffset.y + dy
-        const snapped = snapPosition(rawX, rawY, selectedObjectId)
         
-        // Calculate the shift from original position
-        const shiftX = snapped.x - dragOffset.x
-        const shiftY = snapped.y - dragOffset.y
+        // Calculate the visual shift for formula transformation
+        const shiftX = (rawX - dragOffset.x)
+        const shiftY = (rawY - dragOffset.y)
         
         // Only update if there's actually a shift
         if (Math.abs(shiftX) > 0.01 || Math.abs(shiftY) > 0.01) {
@@ -2311,7 +2311,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
             transformedFormula = `(${transformedFormula})${shift}`
           }
           
-          // Shift the xRange and yRange
+          // Shift the xRange and yRange to follow the visual movement
           const xRange = dragOffset.xRange || obj.xRange || { min: -5, max: 5 }
           const yRange = dragOffset.yRange || obj.yRange || { min: -3, max: 3 }
           
@@ -2325,14 +2325,12 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
             max: parseFloat((yRange.max + shiftY).toFixed(2))
           }
           
+          // DON'T update x and y - keep graph at original position
           onUpdateObject(selectedObjectId, {
-            ...snapped,
             formula: transformedFormula,
             xRange: newXRange,
             yRange: newYRange
           })
-        } else {
-          onUpdateObject(selectedObjectId, snapped)
         }
       } else {
       const rawX = dragOffset.x + dx

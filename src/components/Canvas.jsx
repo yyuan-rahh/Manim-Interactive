@@ -703,11 +703,11 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         const axesId = obj.axesId
         const axes = scene?.objects?.find(o => o.id === axesId)
         
-        // Use axes range if available, otherwise use default range
-        const xMin = axes?.xRange?.min ?? obj.xRange?.min ?? -5
-        const xMax = axes?.xRange?.max ?? obj.xRange?.max ?? 5
-        const yMin = axes?.yRange?.min ?? obj.yRange?.min ?? -3
-        const yMax = axes?.yRange?.max ?? obj.yRange?.max ?? 3
+        // Use graph's own range (determines what portion of function is visible)
+        const xMin = obj.xRange?.min ?? -5
+        const xMax = obj.xRange?.max ?? 5
+        const yMin = obj.yRange?.min ?? -3
+        const yMax = obj.yRange?.max ?? 3
         
         let points = []
         try {

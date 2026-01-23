@@ -169,7 +169,7 @@ function PropertiesPanel({
           </div>
         )}
         
-        {!isMultiSelect && (
+        {!isMultiSelect && object && (
           <div className="property-group">
             <label className="property-label">Type</label>
             <div className="property-value type-badge">{object.type}</div>

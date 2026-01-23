@@ -238,14 +238,14 @@ function PropertiesPanel({
             <div className="property-group">
               <label className="property-label">Width</label>
               <NumberInput
-                value={isMultiSelect ? selectedObjects[0].width : object.width}
+                value={isMultiSelect ? selectedObjects[0].width : (object?.width || 1)}
                 onChange={(val) => handleNumberChange('width', val)}
               />
             </div>
             <div className="property-group">
               <label className="property-label">Height</label>
               <NumberInput
-                value={isMultiSelect ? selectedObjects[0].height : object.height}
+                value={isMultiSelect ? selectedObjects[0].height : (object?.height || 1)}
                 onChange={(val) => handleNumberChange('height', val)}
               />
             </div>
@@ -256,7 +256,7 @@ function PropertiesPanel({
           <div className="property-group">
             <label className="property-label">Radius</label>
             <NumberInput
-              value={isMultiSelect ? selectedObjects[0].radius : object.radius}
+              value={isMultiSelect ? selectedObjects[0].radius : (object?.radius || 0.5)}
               onChange={(val) => handleNumberChange('radius', val)}
             />
           </div>
@@ -378,7 +378,7 @@ function PropertiesPanel({
           </>
         )}
         
-        {(object.type === 'line' || object.type === 'arrow') && (
+        {!isMultiSelect && (object?.type === 'line' || object?.type === 'arrow') && (
           <div className="property-row">
             <div className="property-group">
               <label className="property-label">End X</label>
@@ -397,7 +397,7 @@ function PropertiesPanel({
           </div>
         )}
 
-        {object.type === 'arc' && (
+        {!isMultiSelect && object?.type === 'arc' && (
           <>
             <div className="property-section-title">Arc</div>
             <div className="property-row">
@@ -423,7 +423,7 @@ function PropertiesPanel({
           </>
         )}
         
-        {object.type === 'text' && (
+        {!isMultiSelect && object?.type === 'text' && (
           <>
             <div className="property-group">
               <label className="property-label">Text</label>
@@ -457,7 +457,7 @@ function PropertiesPanel({
           </>
         )}
         
-        {object.type === 'latex' && (
+        {!isMultiSelect && object?.type === 'latex' && (
           <div className="property-group">
             <label className="property-label">LaTeX</label>
             <DesmosMathField
@@ -468,7 +468,7 @@ function PropertiesPanel({
           </div>
         )}
 
-        {object.type === 'axes' && (
+        {!isMultiSelect && object?.type === 'axes' && (
           <>
             <div className="property-section-title">Axes</div>
             <div className="property-row">
@@ -546,7 +546,7 @@ function PropertiesPanel({
           </>
         )}
 
-        {object.type === 'graph' && (
+        {!isMultiSelect && object?.type === 'graph' && (
           <>
             <div className="property-section-title">Linking</div>
             <div className="property-group">
@@ -671,7 +671,7 @@ function PropertiesPanel({
           </>
         )}
 
-        {object.type === 'graphCursor' && (
+        {!isMultiSelect && object?.type === 'graphCursor' && (
           <>
             <div className="property-section-title">Linking</div>
             {linkingStatus.needsLink && linkingStatus.missingLinks.includes('graphId') && (
@@ -787,7 +787,7 @@ function PropertiesPanel({
           </>
         )}
 
-        {object.type === 'tangentLine' && (
+        {!isMultiSelect && object?.type === 'tangentLine' && (
           <>
             <div className="property-section-title">Tangent Line</div>
             {linkingStatus.needsLink && (
@@ -926,7 +926,7 @@ function PropertiesPanel({
           </>
         )}
 
-        {object.type === 'limitProbe' && (
+        {!isMultiSelect && object?.type === 'limitProbe' && (
           <>
             <div className="property-section-title">Limit Probe</div>
             <div className="property-group">
@@ -1038,7 +1038,7 @@ function PropertiesPanel({
           </>
         )}
 
-        {object.type === 'valueLabel' && (
+        {!isMultiSelect && object?.type === 'valueLabel' && (
           <>
             <div className="property-section-title">Value Label</div>
             <div className="property-group">
@@ -1199,14 +1199,14 @@ function PropertiesPanel({
           <div className="property-group">
             <label className="property-label">Position X</label>
             <NumberInput
-              value={isMultiSelect ? (selectedObjects[0].x || 0) : (object.x || 0)}
+              value={isMultiSelect ? (selectedObjects[0].x || 0) : (object?.x || 0)}
               onChange={(val) => handleNumberChange('x', val)}
             />
           </div>
           <div className="property-group">
             <label className="property-label">Position Y</label>
             <NumberInput
-              value={isMultiSelect ? (selectedObjects[0].y || 0) : (object.y || 0)}
+              value={isMultiSelect ? (selectedObjects[0].y || 0) : (object?.y || 0)}
               onChange={(val) => handleNumberChange('y', val)}
             />
           </div>
@@ -1226,7 +1226,7 @@ function PropertiesPanel({
               -15°
             </button>
             <NumberInput
-              value={isMultiSelect ? (selectedObjects[0].rotation || 0) : (object.rotation || 0)}
+              value={isMultiSelect ? (selectedObjects[0].rotation || 0) : (object?.rotation || 0)}
               onChange={(val) => handleNumberChange('rotation', val)}
               style={{ flex: 1 }}
             />
@@ -1250,39 +1250,39 @@ function PropertiesPanel({
             min="0"
             max="1"
             step="0.1"
-            value={isMultiSelect ? (selectedObjects[0].opacity ?? 1) : (object.opacity ?? 1)}
+            value={isMultiSelect ? (selectedObjects[0].opacity ?? 1) : (object?.opacity ?? 1)}
             onChange={(e) => handleNumberChange('opacity', parseFloat(e.target.value))}
           />
-          <span className="range-value">{(isMultiSelect ? (selectedObjects[0].opacity ?? 1) : (object.opacity ?? 1)).toFixed(1)}</span>
+          <span className="range-value">{(isMultiSelect ? (selectedObjects[0].opacity ?? 1) : (object?.opacity ?? 1)).toFixed(1)}</span>
         </div>
         
         <div className="property-section-title">Appearance</div>
         
-        {(isMultiSelect ? selectedObjects.some(obj => obj.fill !== undefined) : object.fill !== undefined) && (
+        {(isMultiSelect ? selectedObjects.some(obj => obj.fill !== undefined) : object?.fill !== undefined) && (
           <div className="property-group">
             <label className="property-label">Fill Color</label>
             <input
               type="color"
-              value={isMultiSelect ? (selectedObjects.find(obj => obj.fill !== undefined)?.fill || '#ffffff') : (object.fill || '#ffffff')}
+              value={isMultiSelect ? (selectedObjects.find(obj => obj.fill !== undefined)?.fill || '#ffffff') : (object?.fill || '#ffffff')}
               onChange={(e) => handleChange('fill', e.target.value)}
             />
           </div>
         )}
         
-        {(isMultiSelect ? selectedObjects.some(obj => obj.stroke !== undefined) : object.stroke !== undefined) && (
+        {(isMultiSelect ? selectedObjects.some(obj => obj.stroke !== undefined) : object?.stroke !== undefined) && (
           <>
             <div className="property-group">
               <label className="property-label">Stroke Color</label>
               <input
                 type="color"
-                value={isMultiSelect ? (selectedObjects.find(obj => obj.stroke !== undefined)?.stroke || '#ffffff') : (object.stroke || '#ffffff')}
+                value={isMultiSelect ? (selectedObjects.find(obj => obj.stroke !== undefined)?.stroke || '#ffffff') : (object?.stroke || '#ffffff')}
                 onChange={(e) => handleChange('stroke', e.target.value)}
               />
             </div>
             <div className="property-group">
               <label className="property-label">Stroke Width</label>
               <NumberInput
-                value={isMultiSelect ? (selectedObjects.find(obj => obj.strokeWidth !== undefined)?.strokeWidth || 2) : (object.strokeWidth || 2)}
+                value={isMultiSelect ? (selectedObjects.find(obj => obj.strokeWidth !== undefined)?.strokeWidth || 2) : (object?.strokeWidth || 2)}
                 onChange={(val) => handleNumberChange('strokeWidth', val)}
               />
             </div>
@@ -1292,7 +1292,7 @@ function PropertiesPanel({
         <div className="property-group">
           <label className="property-label">Z-Index</label>
           <NumberInput
-            value={isMultiSelect ? (selectedObjects[0].zIndex || 0) : (object.zIndex || 0)}
+            value={isMultiSelect ? (selectedObjects[0].zIndex || 0) : (object?.zIndex || 0)}
             onChange={(val) => handleNumberChange('zIndex', Math.round(val))}
           />
         </div>
@@ -1302,7 +1302,7 @@ function PropertiesPanel({
         <div className="property-group">
           <label className="property-label">Entry Animation</label>
           <select
-            value={isMultiSelect ? (selectedObjects[0].animationType || 'auto') : (object.animationType || 'auto')}
+            value={isMultiSelect ? (selectedObjects[0].animationType || 'auto') : (object?.animationType || 'auto')}
             onChange={(e) => handleChange('animationType', e.target.value)}
             className="animation-select"
           >
@@ -1318,7 +1318,7 @@ function PropertiesPanel({
         <div className="property-group">
           <label className="property-label">Exit Animation</label>
           <select
-            value={isMultiSelect ? (selectedObjects[0].exitAnimationType || 'FadeOut') : (object.exitAnimationType || 'FadeOut')}
+            value={isMultiSelect ? (selectedObjects[0].exitAnimationType || 'FadeOut') : (object?.exitAnimationType || 'FadeOut')}
             onChange={(e) => handleChange('exitAnimationType', e.target.value)}
             className="animation-select"
           >
@@ -1336,14 +1336,14 @@ function PropertiesPanel({
           <div className="property-group">
             <label className="property-label">Run Time (s)</label>
             <NumberInput
-              value={isMultiSelect ? (selectedObjects[0].runTime || 1) : (object.runTime || 1)}
+              value={isMultiSelect ? (selectedObjects[0].runTime || 1) : (object?.runTime || 1)}
               onChange={(val) => handleNumberChange('runTime', Math.max(0.1, val))}
             />
           </div>
           <div className="property-group">
             <label className="property-label">Delay (s)</label>
             <NumberInput
-              value={isMultiSelect ? (selectedObjects[0].delay || 0) : (object.delay || 0)}
+              value={isMultiSelect ? (selectedObjects[0].delay || 0) : (object?.delay || 0)}
               onChange={(val) => handleNumberChange('delay', Math.max(0, val))}
             />
           </div>

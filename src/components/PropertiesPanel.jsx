@@ -1217,7 +1217,7 @@ function PropertiesPanel({
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <button
               onClick={() => {
-                const currentRot = isMultiSelect ? (selectedObjects[0].rotation || 0) : (object.rotation || 0)
+                const currentRot = isMultiSelect ? (selectedObjects[0].rotation || 0) : (object?.rotation || 0)
                 handleNumberChange('rotation', currentRot - 15)
               }}
               style={{ padding: '4px 8px', cursor: 'pointer' }}
@@ -1232,7 +1232,7 @@ function PropertiesPanel({
             />
             <button
               onClick={() => {
-                const currentRot = isMultiSelect ? (selectedObjects[0].rotation || 0) : (object.rotation || 0)
+                const currentRot = isMultiSelect ? (selectedObjects[0].rotation || 0) : (object?.rotation || 0)
                 handleNumberChange('rotation', currentRot + 15)
               }}
               style={{ padding: '4px 8px', cursor: 'pointer' }}

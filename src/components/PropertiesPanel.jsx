@@ -58,29 +58,9 @@ function PropertiesPanel({
   onSelectObjects
 }) {
   const numSelected = selectedObjects?.length || 0
+  const isMultiSelect = numSelected > 1
   
-  // Show multi-select summary if more than one object selected
-  if (numSelected > 1) {
-    return (
-      <div className="properties-panel">
-        <div className="panel-header">
-          <h3>Multiple Objects Selected</h3>
-        </div>
-        <div className="panel-section">
-          <p>{numSelected} objects selected</p>
-          <div style={{ marginTop: '8px', fontSize: '13px', color: '#888' }}>
-            {selectedObjects.map(obj => `${obj.type}`).join(', ')}
-          </div>
-          <div style={{ marginTop: '16px', fontSize: '13px', color: '#aaa' }}>
-            Use canvas to move, rotate, or duplicate the selection.
-            Press Delete to remove all selected objects.
-          </div>
-        </div>
-      </div>
-    )
-  }
-  
-  if (!object) {
+  if (!object && numSelected === 0) {
     return (
       <div className="properties-panel">
         <div className="panel-header">
@@ -94,28 +74,39 @@ function PropertiesPanel({
   }
 
   const handleChange = (key, value) => {
-    onUpdateObject(object.id, { [key]: value })
+    if (isMultiSelect) {
+      // Apply change to all selected objects
+      selectedObjects.forEach(obj => {
+        onUpdateObject(obj.id, { [key]: value })
+      })
+    } else {
+      onUpdateObject(object.id, { [key]: value })
+    }
   }
 
   const handleNumberChange = (key, value) => {
     handleChange(key, value)
   }
 
-  const transformCandidates = (scene?.objects || []).filter(o => o.id !== object.id)
+  const transformCandidates = (scene?.objects || []).filter(o => o.id !== object?.id)
   
-  // Get linking status for warnings
-  const linkingStatus = getLinkingStatusHelper(object)
+  // For multi-select, check if all objects are the same type
+  const allSameType = isMultiSelect ? selectedObjects.every(obj => obj.type === selectedObjects[0].type) : true
+  const commonType = allSameType ? (isMultiSelect ? selectedObjects[0].type : object?.type) : null
   
-  // Formula validation
+  // Get linking status for warnings (only for single select)
+  const linkingStatus = !isMultiSelect && object ? getLinkingStatusHelper(object) : { needsLink: false, missingLinks: [], eligibleTargets: [] }
+  
+  // Formula validation (only for single select)
   const [formulaValidation, setFormulaValidation] = useState({ valid: true, error: null })
   useEffect(() => {
-    if (object?.formula) {
+    if (!isMultiSelect && object?.formula) {
       const validation = mathParser.validate(object.formula)
       setFormulaValidation(validation)
     } else {
       setFormulaValidation({ valid: true, error: null })
     }
-  }, [object?.formula])
+  }, [object?.formula, isMultiSelect])
   
   // Check for discontinuity at cursor x0
   const [discontinuityWarning, setDiscontinuityWarning] = useState(null)
@@ -150,84 +141,129 @@ function PropertiesPanel({
   return (
     <div className="properties-panel">
       <div className="panel-header">
-        <h3>Properties</h3>
+        <h3>{isMultiSelect ? `${numSelected} Objects Selected` : 'Properties'}</h3>
         <button 
           className="delete-btn"
-          onClick={() => onDeleteObject(object.id)}
-          title="Delete Object"
+          onClick={() => {
+            if (isMultiSelect) {
+              selectedObjects.forEach(obj => onDeleteObject(obj.id))
+            } else {
+              onDeleteObject(object.id)
+            }
+          }}
+          title={isMultiSelect ? "Delete All Selected Objects" : "Delete Object"}
         >
-          Delete
+          Delete {isMultiSelect ? `(${numSelected})` : ''}
         </button>
       </div>
       
       <div className="properties-content">
-        <div className="property-group">
-          <label className="property-label">Type</label>
-          <div className="property-value type-badge">{object.type}</div>
-        </div>
+        {isMultiSelect && (
+          <div className="panel-section" style={{ marginBottom: '16px', padding: '12px', background: 'rgba(59, 130, 246, 0.1)', borderRadius: '4px' }}>
+            <div style={{ fontSize: '13px', color: '#888', marginBottom: '8px' }}>
+              Editing {numSelected} objects: {selectedObjects.map(obj => obj.type).join(', ')}
+            </div>
+            <div style={{ fontSize: '12px', color: '#666' }}>
+              Changes will apply to all selected objects
+            </div>
+          </div>
+        )}
+        
+        {!isMultiSelect && (
+          <div className="property-group">
+            <label className="property-label">Type</label>
+            <div className="property-value type-badge">{object.type}</div>
+          </div>
+        )}
         
         <div className="property-section-title">Layer Order</div>
         <div className="layer-controls">
           <button 
             className="layer-btn" 
-            onClick={() => onBringToFront(object.id)}
+            onClick={() => {
+              if (isMultiSelect) {
+                selectedObjects.forEach(obj => onBringToFront(obj.id))
+              } else {
+                onBringToFront(object.id)
+              }
+            }}
             title="Bring to Front"
           >
             Front
           </button>
           <button 
             className="layer-btn" 
-            onClick={() => onBringForward(object.id)}
+            onClick={() => {
+              if (isMultiSelect) {
+                selectedObjects.forEach(obj => onBringForward(obj.id))
+              } else {
+                onBringForward(object.id)
+              }
+            }}
             title="Bring Forward"
           >
             Up
           </button>
           <button 
             className="layer-btn" 
-            onClick={() => onSendBackward(object.id)}
+            onClick={() => {
+              if (isMultiSelect) {
+                selectedObjects.forEach(obj => onSendBackward(obj.id))
+              } else {
+                onSendBackward(object.id)
+              }
+            }}
             title="Send Backward"
           >
             Down
           </button>
           <button 
             className="layer-btn" 
-            onClick={() => onSendToBack(object.id)}
+            onClick={() => {
+              if (isMultiSelect) {
+                selectedObjects.forEach(obj => onSendToBack(obj.id))
+              } else {
+                onSendToBack(object.id)
+              }
+            }}
             title="Send to Back"
           >
             Back
           </button>
         </div>
         
-        {object.type === 'rectangle' && (
+        {/* Common properties for all objects or same-type multi-select */}
+        {(commonType === 'rectangle' || (!allSameType && !isMultiSelect && object?.type === 'rectangle')) && (
           <div className="property-row">
             <div className="property-group">
               <label className="property-label">Width</label>
               <NumberInput
-                value={object.width}
+                value={isMultiSelect ? selectedObjects[0].width : object.width}
                 onChange={(val) => handleNumberChange('width', val)}
               />
             </div>
             <div className="property-group">
               <label className="property-label">Height</label>
               <NumberInput
-                value={object.height}
+                value={isMultiSelect ? selectedObjects[0].height : object.height}
                 onChange={(val) => handleNumberChange('height', val)}
               />
             </div>
           </div>
         )}
         
-        {(object.type === 'circle' || object.type === 'dot') && (
+        {((commonType === 'circle' || commonType === 'dot') || (!allSameType && !isMultiSelect && (object?.type === 'circle' || object?.type === 'dot'))) && (
           <div className="property-group">
             <label className="property-label">Radius</label>
             <NumberInput
-              value={object.radius}
+              value={isMultiSelect ? selectedObjects[0].radius : object.radius}
               onChange={(val) => handleNumberChange('radius', val)}
             />
           </div>
         )}
         
-        {object.type === 'triangle' && (
+        {/* Hide complex type-specific properties for multi-select */}
+        {!isMultiSelect && object?.type === 'triangle' && (
           <>
             <div className="property-section-title">Vertices (relative to center)</div>
             {(object.vertices || []).map((vertex, idx) => {
@@ -274,7 +310,7 @@ function PropertiesPanel({
           </>
         )}
         
-        {object.type === 'polygon' && (
+        {!isMultiSelect && object?.type === 'polygon' && (
           <>
             <div className="property-group">
               <label className="property-label">Sides</label>
@@ -1163,14 +1199,14 @@ function PropertiesPanel({
           <div className="property-group">
             <label className="property-label">Position X</label>
             <NumberInput
-              value={object.x || 0}
+              value={isMultiSelect ? (selectedObjects[0].x || 0) : (object.x || 0)}
               onChange={(val) => handleNumberChange('x', val)}
             />
           </div>
           <div className="property-group">
             <label className="property-label">Position Y</label>
             <NumberInput
-              value={object.y || 0}
+              value={isMultiSelect ? (selectedObjects[0].y || 0) : (object.y || 0)}
               onChange={(val) => handleNumberChange('y', val)}
             />
           </div>
@@ -1180,19 +1216,25 @@ function PropertiesPanel({
           <label className="property-label">Rotation (°)</label>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <button
-              onClick={() => handleNumberChange('rotation', (object.rotation || 0) - 15)}
+              onClick={() => {
+                const currentRot = isMultiSelect ? (selectedObjects[0].rotation || 0) : (object.rotation || 0)
+                handleNumberChange('rotation', currentRot - 15)
+              }}
               style={{ padding: '4px 8px', cursor: 'pointer' }}
               title="Rotate -15°"
             >
               -15°
             </button>
             <NumberInput
-              value={object.rotation || 0}
+              value={isMultiSelect ? (selectedObjects[0].rotation || 0) : (object.rotation || 0)}
               onChange={(val) => handleNumberChange('rotation', val)}
               style={{ flex: 1 }}
             />
             <button
-              onClick={() => handleNumberChange('rotation', (object.rotation || 0) + 15)}
+              onClick={() => {
+                const currentRot = isMultiSelect ? (selectedObjects[0].rotation || 0) : (object.rotation || 0)
+                handleNumberChange('rotation', currentRot + 15)
+              }}
               style={{ padding: '4px 8px', cursor: 'pointer' }}
               title="Rotate +15°"
             >
@@ -1208,39 +1250,39 @@ function PropertiesPanel({
             min="0"
             max="1"
             step="0.1"
-            value={object.opacity ?? 1}
+            value={isMultiSelect ? (selectedObjects[0].opacity ?? 1) : (object.opacity ?? 1)}
             onChange={(e) => handleNumberChange('opacity', parseFloat(e.target.value))}
           />
-          <span className="range-value">{(object.opacity ?? 1).toFixed(1)}</span>
+          <span className="range-value">{(isMultiSelect ? (selectedObjects[0].opacity ?? 1) : (object.opacity ?? 1)).toFixed(1)}</span>
         </div>
         
         <div className="property-section-title">Appearance</div>
         
-        {object.fill !== undefined && (
+        {(isMultiSelect ? selectedObjects.some(obj => obj.fill !== undefined) : object.fill !== undefined) && (
           <div className="property-group">
             <label className="property-label">Fill Color</label>
             <input
               type="color"
-              value={object.fill || '#ffffff'}
+              value={isMultiSelect ? (selectedObjects.find(obj => obj.fill !== undefined)?.fill || '#ffffff') : (object.fill || '#ffffff')}
               onChange={(e) => handleChange('fill', e.target.value)}
             />
           </div>
         )}
         
-        {object.stroke !== undefined && (
+        {(isMultiSelect ? selectedObjects.some(obj => obj.stroke !== undefined) : object.stroke !== undefined) && (
           <>
             <div className="property-group">
               <label className="property-label">Stroke Color</label>
               <input
                 type="color"
-                value={object.stroke || '#ffffff'}
+                value={isMultiSelect ? (selectedObjects.find(obj => obj.stroke !== undefined)?.stroke || '#ffffff') : (object.stroke || '#ffffff')}
                 onChange={(e) => handleChange('stroke', e.target.value)}
               />
             </div>
             <div className="property-group">
               <label className="property-label">Stroke Width</label>
               <NumberInput
-                value={object.strokeWidth || 2}
+                value={isMultiSelect ? (selectedObjects.find(obj => obj.strokeWidth !== undefined)?.strokeWidth || 2) : (object.strokeWidth || 2)}
                 onChange={(val) => handleNumberChange('strokeWidth', val)}
               />
             </div>
@@ -1250,7 +1292,7 @@ function PropertiesPanel({
         <div className="property-group">
           <label className="property-label">Z-Index</label>
           <NumberInput
-            value={object.zIndex || 0}
+            value={isMultiSelect ? (selectedObjects[0].zIndex || 0) : (object.zIndex || 0)}
             onChange={(val) => handleNumberChange('zIndex', Math.round(val))}
           />
         </div>
@@ -1260,7 +1302,7 @@ function PropertiesPanel({
         <div className="property-group">
           <label className="property-label">Entry Animation</label>
           <select
-            value={object.animationType || 'auto'}
+            value={isMultiSelect ? (selectedObjects[0].animationType || 'auto') : (object.animationType || 'auto')}
             onChange={(e) => handleChange('animationType', e.target.value)}
             className="animation-select"
           >
@@ -1276,7 +1318,7 @@ function PropertiesPanel({
         <div className="property-group">
           <label className="property-label">Exit Animation</label>
           <select
-            value={object.exitAnimationType || 'FadeOut'}
+            value={isMultiSelect ? (selectedObjects[0].exitAnimationType || 'FadeOut') : (object.exitAnimationType || 'FadeOut')}
             onChange={(e) => handleChange('exitAnimationType', e.target.value)}
             className="animation-select"
           >
@@ -1294,14 +1336,14 @@ function PropertiesPanel({
           <div className="property-group">
             <label className="property-label">Run Time (s)</label>
             <NumberInput
-              value={object.runTime || 1}
+              value={isMultiSelect ? (selectedObjects[0].runTime || 1) : (object.runTime || 1)}
               onChange={(val) => handleNumberChange('runTime', Math.max(0.1, val))}
             />
           </div>
           <div className="property-group">
             <label className="property-label">Delay (s)</label>
             <NumberInput
-              value={object.delay || 0}
+              value={isMultiSelect ? (selectedObjects[0].delay || 0) : (object.delay || 0)}
               onChange={(val) => handleNumberChange('delay', Math.max(0, val))}
             />
           </div>

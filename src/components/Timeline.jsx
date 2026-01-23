@@ -110,8 +110,8 @@ function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKe
     })
     
     // Select the object when starting to drag
-    onSelectObject?.(obj.id)
-  }, [getRootId, onSelectObject])
+    onSelectObjects?.([obj.id])
+  }, [getRootId, onSelectObjects])
 
   // Handle drag move
   const handleMouseMove = useCallback((e) => {
@@ -358,7 +358,7 @@ function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKe
   const beginRename = (obj) => {
     setEditingObjectId(obj.id)
     setEditingName(obj.name || '')
-    onSelectObject?.(obj.id)
+    onSelectObjects?.([obj.id])
   }
 
   const commitRename = useCallback(() => {
@@ -535,7 +535,7 @@ function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKe
                       onMouseDown={(e) => handleDragStart(e, obj, 'move')}
                       onClick={(e) => {
                         e.stopPropagation()
-                        onSelectObject?.(obj.id)
+                        onSelectObjects?.([obj.id])
                       }}
                       onDoubleClick={(e) => {
                         e.stopPropagation()

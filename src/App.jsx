@@ -15,7 +15,7 @@ import './App.css'
 function App() {
   const [project, setProject] = useState(createEmptyProject())
   const [activeSceneId, setActiveSceneId] = useState(project.scenes[0]?.id)
-  const [selectedObjectId, setSelectedObjectId] = useState(null)
+  const [selectedObjectIds, setSelectedObjectIds] = useState([])
   const [currentTime, setCurrentTime] = useState(0)
   const [timelineHeight, setTimelineHeight] = useState(220)
   const [codePanelHeight, setCodePanelHeight] = useState(280)
@@ -32,7 +32,7 @@ function App() {
   const stateRef = useRef({
     project,
     activeSceneId,
-    selectedObjectId,
+    selectedObjectIds,
     customCode,
     isCustomCodeSynced,
   })
@@ -42,7 +42,8 @@ function App() {
   const resizeRef = useRef(null)
 
   const activeScene = project.scenes.find(s => s.id === activeSceneId)
-  const selectedObject = activeScene?.objects.find(o => o.id === selectedObjectId)
+  const selectedObjects = activeScene?.objects.filter(o => selectedObjectIds.includes(o.id)) || []
+  const selectedObject = selectedObjects.length === 1 ? selectedObjects[0] : null
 
   // Keep time within scene bounds when switching scenes / durations
   useEffect(() => {
@@ -51,8 +52,8 @@ function App() {
   }, [activeSceneId, activeScene?.duration])
 
   useEffect(() => {
-    stateRef.current = { project, activeSceneId, selectedObjectId, customCode, isCustomCodeSynced }
-  }, [project, activeSceneId, selectedObjectId, customCode, isCustomCodeSynced])
+    stateRef.current = { project, activeSceneId, selectedObjectIds, customCode, isCustomCodeSynced }
+  }, [project, activeSceneId, selectedObjectIds, customCode, isCustomCodeSynced])
 
   const startResize = useCallback((type, e) => {
     e.preventDefault()
@@ -124,7 +125,7 @@ function App() {
       const cur = stateRef.current
       setProject(prev.project)
       setActiveSceneId(prev.activeSceneId)
-      setSelectedObjectId(prev.selectedObjectId)
+      setSelectedObjectIds(prev.selectedObjectIds)
       setCustomCode(prev.customCode)
       setIsCustomCodeSynced(prev.isCustomCodeSynced)
       return { past: h.past.slice(0, -1), future: [cur, ...h.future] }
@@ -138,7 +139,7 @@ function App() {
       const cur = stateRef.current
       setProject(next.project)
       setActiveSceneId(next.activeSceneId)
-      setSelectedObjectId(next.selectedObjectId)
+      setSelectedObjectIds(next.selectedObjectIds)
       setCustomCode(next.customCode)
       setIsCustomCodeSynced(next.isCustomCodeSynced)
       return { past: [...h.past, cur], future: h.future.slice(1) }
@@ -174,7 +175,7 @@ function App() {
         scenes: [...prev.scenes, newScene]
       }))
       setActiveSceneId(newScene.id)
-      setSelectedObjectId(null)
+      setSelectedObjectIds([])
     })
   }, [project.scenes.length])
 
@@ -187,7 +188,7 @@ function App() {
       }))
       if (activeSceneId === sceneId) {
         setActiveSceneId(project.scenes.find(s => s.id !== sceneId)?.id)
-        setSelectedObjectId(null)
+        setSelectedObjectIds([])
       }
     })
   }, [project.scenes, activeSceneId])
@@ -228,7 +229,7 @@ function App() {
         scenes: [...prev.scenes, newScene]
       }))
       setActiveSceneId(newScene.id)
-      setSelectedObjectId(null)
+      setSelectedObjectIds([])
     })
   }, [project.scenes])
 
@@ -274,7 +275,7 @@ function App() {
             : s
         )
       }))
-      setSelectedObjectId(newObject.id)
+      setSelectedObjectIds([newObject.id])
     })
   }, [activeScene, activeSceneId])
 
@@ -307,11 +308,11 @@ function App() {
             : s
         )
       }))
-      if (selectedObjectId === objectId) {
-        setSelectedObjectId(null)
+      if (selectedObjectIds.includes(objectId)) {
+        setSelectedObjectIds(prev => prev.filter(id => id !== objectId))
       }
     })
-  }, [activeSceneId, selectedObjectId])
+  }, [activeSceneId, selectedObjectIds])
 
   const duplicateObject = useCallback((objectId) => {
     if (!activeScene) return
@@ -335,7 +336,7 @@ function App() {
           s.id === activeSceneId ? { ...s, objects: [...s.objects, clone] } : s
         )
       }))
-      setSelectedObjectId(clone.id)
+      setSelectedObjectIds([clone.id])
     })
   }, [activeScene, activeSceneId, commit])
 
@@ -463,7 +464,7 @@ function App() {
           const validated = validateProject(result.data)
           setProject(validated)
           setActiveSceneId(validated.scenes[0]?.id)
-          setSelectedObjectId(null)
+          setSelectedObjectIds([])
           setIsCustomCodeSynced(true)
         })
       }
@@ -543,7 +544,7 @@ function App() {
           s.id === activeSceneId ? { ...s, objects: [] } : s
         )
       }))
-      setSelectedObjectId(null)
+      setSelectedObjectIds([])
     })
   }, [activeScene, activeSceneId, commit])
 
@@ -557,14 +558,14 @@ function App() {
         )
       }))
       setActiveSceneId(demoScene.id)
-      setSelectedObjectId(null)
+      setSelectedObjectIds([])
     })
   }, [activeSceneId, commit])
 
-  const deleteSelectedObject = useCallback(() => {
-    if (!selectedObjectId) return
-    deleteObject(selectedObjectId)
-  }, [deleteObject, selectedObjectId])
+  const deleteSelectedObjects = useCallback(() => {
+    if (selectedObjectIds.length === 0) return
+    selectedObjectIds.forEach(id => deleteObject(id))
+  }, [deleteObject, selectedObjectIds])
 
   // Cmd+Z / Cmd+Shift+Z undo/redo + Delete/Backspace deletion (unless typing)
   useEffect(() => {
@@ -589,15 +590,15 @@ function App() {
         return
       }
 
-      if ((e.key === 'Backspace' || e.key === 'Delete') && selectedObjectId) {
+      if ((e.key === 'Backspace' || e.key === 'Delete') && selectedObjectIds.length > 0) {
         e.preventDefault()
-        deleteSelectedObject()
+        deleteSelectedObjects()
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [deleteSelectedObject, redo, selectedObjectId, undo])
+  }, [deleteSelectedObjects, redo, selectedObjectIds, undo])
 
   return (
     <div className="app">
@@ -628,8 +629,8 @@ function App() {
             <Canvas
               scene={activeScene}
               currentTime={currentTime}
-              selectedObjectId={selectedObjectId}
-              onSelectObject={setSelectedObjectId}
+              selectedObjectIds={selectedObjectIds}
+              onSelectObjects={setSelectedObjectIds}
               onUpdateObject={updateObject}
               onAddObject={addObject}
               onDuplicateObject={duplicateObject}
@@ -646,11 +647,11 @@ function App() {
           <div className="timeline-panel" style={{ height: timelineHeight }}>
             <Timeline
               scene={activeScene}
-              selectedObjectId={selectedObjectId}
+              selectedObjectIds={selectedObjectIds}
               currentTime={currentTime}
               onTimeChange={setCurrentTime}
               onAddKeyframe={addKeyframe}
-              onSelectObject={setSelectedObjectId}
+              onSelectObjects={setSelectedObjectIds}
               onUpdateObject={updateObject}
             />
           </div>
@@ -660,13 +661,14 @@ function App() {
           <div className="properties-panel-wrapper">
             <PropertiesPanel
               object={selectedObject}
+              selectedObjects={selectedObjects}
               onUpdateObject={updateObject}
               onDeleteObject={deleteObject}
               onBringForward={bringForward}
               onSendBackward={sendBackward}
               onBringToFront={bringToFront}
               onSendToBack={sendToBack}
-              onSelectObject={setSelectedObjectId}
+              onSelectObjects={setSelectedObjectIds}
               scene={activeScene}
             />
           </div>

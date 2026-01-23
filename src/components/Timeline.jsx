@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import './Timeline.css'
 import { getObjectDisplayName as getObjectDisplayNameHelper, getObjectTypeDisplayName } from '../utils/objectLabel'
 
-function Timeline({ scene, selectedObjectId, currentTime, onTimeChange, onAddKeyframe, onSelectObject, onUpdateObject }) {
+function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKeyframe, onSelectObjects, onUpdateObject }) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [dragState, setDragState] = useState(null)
   const trackRefs = useRef({})
@@ -12,7 +12,7 @@ function Timeline({ scene, selectedObjectId, currentTime, onTimeChange, onAddKey
   const editInputRef = useRef(null)
   
   const duration = scene?.duration || 5
-  const selectedObject = scene?.objects.find(o => o.id === selectedObjectId)
+  const selectedObject = selectedObjectIds?.length === 1 ? scene?.objects.find(o => o.id === selectedObjectIds[0]) : null
 
   const objectsById = useMemo(() => {
     const map = new Map()
@@ -67,10 +67,10 @@ function Timeline({ scene, selectedObjectId, currentTime, onTimeChange, onAddKey
   }
 
   const handleAddKeyframe = (property) => {
-    if (!selectedObjectId || !selectedObject) return
+    if (selectedObjectIds?.length !== 1 || !selectedObject) return
     
     const value = selectedObject[property]
-    onAddKeyframe(selectedObjectId, currentTime, property, value)
+    onAddKeyframe(selectedObjectIds[0], currentTime, property, value)
   }
 
   const formatTime = (seconds) => {
@@ -516,7 +516,7 @@ function Timeline({ scene, selectedObjectId, currentTime, onTimeChange, onAddKey
                 ref={el => trackRefs.current[row.rootId] = el}
               >
                 {row.objects.map(obj => {
-                  const isSelected = obj.id === selectedObjectId
+                  const isSelected = selectedObjectIds?.includes(obj.id)
                   const isDragging = dragState?.objectId === obj.id
                   const clipStyle = getClipStyle(obj)
                   const clipColor = getObjectColor(obj)

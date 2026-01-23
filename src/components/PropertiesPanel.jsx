@@ -47,6 +47,7 @@ function NumberInput({ value, onChange, step = 0.1, min, max, ...props }) {
 
 function PropertiesPanel({ 
   object, 
+  selectedObjects = [],
   scene,
   onUpdateObject, 
   onDeleteObject,
@@ -54,8 +55,31 @@ function PropertiesPanel({
   onSendBackward,
   onBringToFront,
   onSendToBack,
-  onSelectObject
+  onSelectObjects
 }) {
+  const numSelected = selectedObjects?.length || 0
+  
+  // Show multi-select summary if more than one object selected
+  if (numSelected > 1) {
+    return (
+      <div className="properties-panel">
+        <div className="panel-header">
+          <h3>Multiple Objects Selected</h3>
+        </div>
+        <div className="panel-section">
+          <p>{numSelected} objects selected</p>
+          <div style={{ marginTop: '8px', fontSize: '13px', color: '#888' }}>
+            {selectedObjects.map(obj => `${obj.type}`).join(', ')}
+          </div>
+          <div style={{ marginTop: '16px', fontSize: '13px', color: '#aaa' }}>
+            Use canvas to move, rotate, or duplicate the selection.
+            Press Delete to remove all selected objects.
+          </div>
+        </div>
+      </div>
+    )
+  }
+  
   if (!object) {
     return (
       <div className="properties-panel">
@@ -594,9 +618,9 @@ function PropertiesPanel({
                     ))
                   }
                 </select>
-                {object.axesId && onSelectObject && (
+                {object.axesId && onSelectObjects && (
                   <button
-                    onClick={() => onSelectObject(object.axesId)}
+                    onClick={() => onSelectObjects([object.axesId])}
                     title="Jump to linked axes"
                     style={{ padding: '4px 8px', fontSize: '12px' }}
                   >
@@ -638,9 +662,9 @@ function PropertiesPanel({
                     ))
                   }
                 </select>
-                {object.graphId && onSelectObject && (
+                {object.graphId && onSelectObjects && (
                   <button
-                    onClick={() => onSelectObject(object.graphId)}
+                    onClick={() => onSelectObjects([object.graphId])}
                     title="Jump to linked graph"
                     style={{ padding: '4px 8px', fontSize: '12px' }}
                   >
@@ -668,9 +692,9 @@ function PropertiesPanel({
                     ))
                   }
                 </select>
-                {object.axesId && onSelectObject && (
+                {object.axesId && onSelectObjects && (
                   <button
-                    onClick={() => onSelectObject(object.axesId)}
+                    onClick={() => onSelectObjects([object.axesId])}
                     title="Jump to linked axes"
                     style={{ padding: '4px 8px', fontSize: '12px' }}
                   >
@@ -754,9 +778,9 @@ function PropertiesPanel({
                     ))
                   }
                 </select>
-                {object.graphId && onSelectObject && (
+                {object.graphId && onSelectObjects && (
                   <button
-                    onClick={() => onSelectObject(object.graphId)}
+                    onClick={() => onSelectObjects([object.graphId])}
                     title="Jump to linked graph"
                     style={{ padding: '4px 8px', fontSize: '12px' }}
                   >
@@ -784,9 +808,9 @@ function PropertiesPanel({
                     ))
                   }
                 </select>
-                {object.cursorId && onSelectObject && (
+                {object.cursorId && onSelectObjects && (
                   <button
-                    onClick={() => onSelectObject(object.cursorId)}
+                    onClick={() => onSelectObjects([object.cursorId])}
                     title="Jump to linked cursor"
                     style={{ padding: '4px 8px', fontSize: '12px' }}
                   >
@@ -814,9 +838,9 @@ function PropertiesPanel({
                     ))
                   }
                 </select>
-                {object.axesId && onSelectObject && (
+                {object.axesId && onSelectObjects && (
                   <button
-                    onClick={() => onSelectObject(object.axesId)}
+                    onClick={() => onSelectObjects([object.axesId])}
                     title="Jump to linked axes"
                     style={{ padding: '4px 8px', fontSize: '12px' }}
                   >

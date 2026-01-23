@@ -190,10 +190,13 @@ const getVisibleObjectsAtTime = (objects, t) => {
   })
 }
 
-function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUpdateObject, onAddObject, onDuplicateObject, onDeleteObject }) {
+function Canvas({ scene, currentTime = 0, selectedObjectIds = [], onSelectObjects, onUpdateObject, onAddObject, onDuplicateObject, onDeleteObject }) {
   const canvasRef = useRef(null)
   const containerRef = useRef(null)
   const canvasWrapperRef = useRef(null)
+  
+  // Selection box state for area selection
+  const [selectionBox, setSelectionBox] = useState(null) // { startX, startY, endX, endY } in canvas coordinates
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 450 })
   const MIN_CANVAS_WIDTH = 320
   const MIN_CANVAS_HEIGHT = 180
@@ -212,20 +215,21 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
   const rotateStartRef = useRef(null)
   
   // Link mode state
-  const selectedObject = scene?.objects?.find(o => o.id === selectedObjectId)
+  const selectedObjects = scene?.objects?.filter(o => selectedObjectIds[0]s.includes(o.id)) || []
+  const selectedObject = selectedObjects.length === 1 ? selectedObjects[0] : null
   const linkingStatus = selectedObject ? getLinkingStatus(selectedObject) : { needsLink: false, missingLinks: [], eligibleTargets: [] }
   const [linkModeActive, setLinkModeActive] = useState(false)
   const [hoveredLinkTarget, setHoveredLinkTarget] = useState(null)
   
   // Auto-enter link mode when selected object needs links
   useEffect(() => {
-    if (linkingStatus.needsLink && selectedObjectId) {
+    if (linkingStatus.needsLink && selectedObjectIds[0]s.length === 1) {
       setLinkModeActive(true)
     } else {
       setLinkModeActive(false)
       setHoveredLinkTarget(null)
     }
-  }, [linkingStatus.needsLink, selectedObjectId])
+  }, [linkingStatus.needsLink, selectedObjectIds[0]s])
   
   // Handle Escape key to exit link mode
   useEffect(() => {
@@ -419,7 +423,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       const eligibleTargetIds = new Set()
       if (linkModeActive && selectedObject) {
         sortedObjects.forEach(obj => {
-          if (obj.id !== selectedObjectId) {
+          if (!selectedObjectIds[0]s.includes(obj.id)) {
             const linkType = getBestLinkType(selectedObject, obj)
             if (linkType) {
               eligibleTargetIds.add(obj.id)
@@ -430,13 +434,31 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       
       sortedObjects.forEach(obj => {
         if (obj.type === 'latex') return
+        const isSelected = selectedObjectIds[0]s.includes(obj.id)
         const isEligibleTarget = eligibleTargetIds.has(obj.id)
         const isHoveredTarget = obj.id === hoveredLinkTarget
-        drawObject(ctx, obj, obj.id === selectedObjectId, scene, linkModeActive, isEligibleTarget, isHoveredTarget)
+        drawObject(ctx, obj, isSelected, scene, linkModeActive, isEligibleTarget, isHoveredTarget)
       })
+      
+      // Draw selection box if active
+      if (selectionBox) {
+        const { startX, startY, endX, endY } = selectionBox
+        ctx.strokeStyle = '#3b82f6'
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.1)'
+        ctx.lineWidth = 2
+        ctx.setLineDash([])
+        
+        const x = Math.min(startX, endX)
+        const y = Math.min(startY, endY)
+        const width = Math.abs(endX - startX)
+        const height = Math.abs(endY - startY)
+        
+        ctx.fillRect(x, y, width, height)
+        ctx.strokeRect(x, y, width, height)
+      }
     }
     
-  }, [scene, currentTime, selectedObjectId, canvasSize, manimToCanvas, linkModeActive, selectedObject, hoveredLinkTarget])
+  }, [scene, currentTime, selectedObjectIds[0]s, canvasSize, manimToCanvas, linkModeActive, selectedObject, hoveredLinkTarget, selectionBox])
 
   const latexObjects = useMemo(() => {
     const objs = scene?.objects || []
@@ -1140,7 +1162,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     
     // Selection outline and handles
     // Highlight linked targets when selected object is a tool
-    if (!isSelected && selectedObjectId && selectedObject) {
+    if (!isSelected && selectedObjectIds[0]s.length === 1 && selectedObject) {
       const isLinkedTarget = 
         (obj.type === 'graph' && selectedObject.graphId === obj.id) ||
         (obj.type === 'graphCursor' && (selectedObject.cursorId === obj.id || selectedObject.graphId === obj.graphId)) ||
@@ -1293,7 +1315,12 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       ctx.setLineDash([])
       ctx.restore()
       
-      // Draw vertex handles (without rotation)
+      // Draw vertex handles (without rotation) - only when single object selected
+      if (selectedObjectIds[0]s.length !== 1) {
+        ctx.restore()
+        return
+      }
+      
       ctx.save()
       if (obj.type === 'triangle') {
         ctx.fillStyle = '#4ade80'
@@ -2092,7 +2119,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     const y = e.clientY - rect.top
     
     // Link mode: if active, try to link to clicked object
-    if (linkModeActive && selectedObjectId && selectedObject) {
+    if (linkModeActive && selectedObjectIds[0]s.length === 1 && selectedObject) {
       const manim = canvasToManim(x, y)
       const objects = getVisibleObjectsAtTime(scene.objects, currentTime)
       
@@ -2102,7 +2129,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           const linkType = getBestLinkType(selectedObject, obj)
           if (linkType) {
             const updates = generateLinkUpdates(selectedObject, obj)
-            onUpdateObject(selectedObjectId, updates)
+            onUpdateObject(selectedObjectIds[0]s[0], updates)
             setLinkModeActive(false)
             setHoveredLinkTarget(null)
             e.preventDefault()
@@ -2114,9 +2141,12 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     }
     
     // First check if clicking on a handle of the selected object
-    if (selectedObjectId) {
-      const selectedObj = getVisibleObjectsAtTime(scene.objects, currentTime).find(o => o.id === selectedObjectId)
-      const handleHit = hitTestHandle(x, y, selectedObj)
+    if (selectedObjectIds[0]s.length > 0) {
+      // Only check handles when exactly one object is selected
+      const selectedObj = selectedObjectIds[0]s.length === 1 
+        ? getVisibleObjectsAtTime(scene.objects, currentTime).find(o => o.id === selectedObjectIds[0]s[0])
+        : null
+      const handleHit = selectedObj ? hitTestHandle(x, y, selectedObj) : null
       
       if (handleHit) {
         if (handleHit === 'rotate' && selectedObj?.type === 'text') {
@@ -2139,21 +2169,21 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
             const verts = selectedObj.vertices || []
             const vertex = verts[vertexIndex]
             if (vertex) {
-              setEditingVertex({ objectId: selectedObjectId, vertexIndex, label: vertex.label || '', isCorner: false })
+              setEditingVertex({ objectId: selectedObjectIds[0]s[0], vertexIndex, label: vertex.label || '', isCorner: false })
               setTimeout(() => vertexInputRef.current?.focus(), 0)
               return
             }
           } else if (handleHit.startsWith('corner-')) {
             const cornerIndex = parseInt(handleHit.split('-')[1])
             const cornerLabels = selectedObj.cornerLabels || []
-            setEditingVertex({ objectId: selectedObjectId, vertexIndex: cornerIndex, label: cornerLabels[cornerIndex] || '', isCorner: true })
+            setEditingVertex({ objectId: selectedObjectIds[0]s[0], vertexIndex: cornerIndex, label: cornerLabels[cornerIndex] || '', isCorner: true })
             setTimeout(() => vertexInputRef.current?.focus(), 0)
             return
           } else if (selectedObj.type === 'axes' && (handleHit === 'right' || handleHit === 'top')) {
             // Double-click on axes endpoint to edit label
             const isXAxis = handleHit === 'right'
             setEditingVertex({ 
-              objectId: selectedObjectId, 
+              objectId: selectedObjectIds[0]s[0], 
               vertexIndex: -1, 
               label: isXAxis ? (selectedObj.xLabel || 'x') : (selectedObj.yLabel || 'y'), 
               isCorner: false,
@@ -2174,11 +2204,25 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       }
     }
     
-    // Otherwise, check if clicking on an object
+    // Check if clicking on an object
     const hitId = hitTest(x, y)
-    onSelectObject(hitId)
     
     if (hitId) {
+      // Handle Shift+click: toggle selection
+      if (e.shiftKey) {
+        if (selectedObjectIds[0]s.includes(hitId)) {
+          onSelectObjects(selectedObjectIds[0]s.filter(id => id !== hitId))
+        } else {
+          onSelectObjects([...selectedObjectIds[0]s, hitId])
+        }
+        return
+      }
+      
+      // Regular click: select this object (if not already sole selection)
+      if (selectedObjectIds[0]s.length !== 1 || selectedObjectIds[0]s[0] !== hitId) {
+        onSelectObjects([hitId])
+      }
+      
       const obj = getVisibleObjectsAtTime(scene.objects, currentTime).find(o => o.id === hitId)
       if (obj) {
         // Move object clip to current timeline time when clicked
@@ -2189,17 +2233,46 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         setDragType('move')
         setActiveHandle(null)
         setDragStart({ x: e.clientX, y: e.clientY })
-        // Store original state for graphs (to calculate transformations)
-        if (obj.type === 'graph') {
+        
+        // For multi-select, store all selected objects' original positions
+        if (selectedObjectIds[0]s.length > 1 || (selectedObjectIds[0]s.length === 1 && selectedObjectIds[0]s[0] === hitId)) {
+          const selectedObjs = getVisibleObjectsAtTime(scene.objects, currentTime).filter(o => 
+            selectedObjectIds[0]s.includes(o.id) || o.id === hitId
+          )
+          setDragOffset({
+            multiSelect: selectedObjs.map(o => ({
+              id: o.id,
+              x: o.x,
+              y: o.y,
+              x2: o.x2,
+              y2: o.y2,
+              cx: o.cx,
+              cy: o.cy,
+              ...(o.type === 'graph' ? {
+                baseFormula: o.formula,
+                xRange: { ...o.xRange },
+                yRange: { ...o.yRange }
+              } : {})
+            }))
+          })
+        } else if (obj.type === 'graph') {
           setDragOffset({ 
             ...obj,
-            baseFormula: obj.formula,  // Store original formula
+            baseFormula: obj.formula,
             xRange: { ...obj.xRange },
             yRange: { ...obj.yRange }
           })
         } else {
           setDragOffset({ ...obj })
         }
+      }
+    } else {
+      // Clicked on empty space: start area selection (unless Shift pressed)
+      if (!e.shiftKey) {
+        onSelectObjects([])
+        setSelectionBox({ startX: x, startY: y, endX: x, endY: y })
+        setIsDragging(true)
+        setDragType('select-area')
       }
     }
   }
@@ -2215,7 +2288,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       return
     }
 
-    onSelectObject?.(hitId)
+    onSelectObjects?.([hitId])
 
     const containerRect = containerRef.current?.getBoundingClientRect()
     const relX = containerRect ? (e.clientX - containerRect.left) : e.clientX
@@ -2226,7 +2299,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
 
   const handleMouseMove = (e) => {
     // Update hovered link target in link mode
-    if (linkModeActive && selectedObjectId && selectedObject) {
+    if (linkModeActive && selectedObjectIds[0]s.length === 1 && selectedObject) {
       const rect = canvasRef.current.getBoundingClientRect()
       const x = e.clientX - rect.left
       const y = e.clientY - rect.top
@@ -2235,7 +2308,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       
       let foundTarget = null
       for (const obj of objects) {
-        if (obj.id !== selectedObjectId && hitTestShape(obj, manim.x, manim.y)) {
+        if (!selectedObjectIds[0]s.includes(obj.id) && hitTestShape(obj, manim.x, manim.y)) {
           const linkType = getBestLinkType(selectedObject, obj)
           if (linkType) {
             foundTarget = obj.id
@@ -2252,7 +2325,16 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       return
     }
     
-    if (!isDragging || !selectedObjectId) return
+    // Handle area selection dragging
+    if (isDragging && dragType === 'select-area') {
+      const rect = canvasRef.current.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      setSelectionBox(prev => prev ? { ...prev, endX: x, endY: y } : null)
+      return
+    }
+    
+    if (!isDragging || selectedObjectIds[0]s.length === 0) return
     
     const dx = (e.clientX - dragStart.x) / scaleX
     const dy = -(e.clientY - dragStart.y) / scaleY
@@ -2261,7 +2343,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
     const shiftHeld = e.shiftKey
     
     if (dragType === 'rotate') {
-      const obj = scene.objects.find(o => o.id === selectedObjectId)
+      const obj = scene.objects.find(o => o.id === selectedObjectIds[0])
       if (!obj || !rotateStartRef.current) return
       const rect = canvasRef.current.getBoundingClientRect()
       const mouse = canvasToManim(e.clientX - rect.left, e.clientY - rect.top)
@@ -2269,21 +2351,55 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       const angle = Math.atan2(mouse.y - center.y, mouse.x - center.x)
       const delta = (angle - rotateStartRef.current.angle) * 180 / Math.PI
       const next = rotateStartRef.current.rotation + delta
-      onUpdateObject(selectedObjectId, { rotation: parseFloat(next.toFixed(2)) })
+      onUpdateObject(selectedObjectIds[0]s[0], { rotation: parseFloat(next.toFixed(2)) })
       return
     }
 
     if (dragType === 'move') {
-      const obj = scene.objects.find(o => o.id === selectedObjectId)
+      // Handle multi-object movement
+      if (dragOffset.multiSelect && dragOffset.multiSelect.length > 0) {
+        dragOffset.multiSelect.forEach(orig => {
+          const obj = scene.objects.find(o => o.id === orig.id)
+          if (!obj) return
+          
+          // Apply the same delta to all objects
+          if (obj.type === 'line' || obj.type === 'arrow') {
+            onUpdateObject(orig.id, {
+              x: parseFloat((orig.x + dx).toFixed(2)),
+              y: parseFloat((orig.y + dy).toFixed(2)),
+              x2: parseFloat((orig.x2 + dx).toFixed(2)),
+              y2: parseFloat((orig.y2 + dy).toFixed(2)),
+            })
+          } else if (obj.type === 'arc') {
+            onUpdateObject(orig.id, {
+              x: parseFloat((orig.x + dx).toFixed(2)),
+              y: parseFloat((orig.y + dy).toFixed(2)),
+              x2: parseFloat((orig.x2 + dx).toFixed(2)),
+              y2: parseFloat((orig.y2 + dy).toFixed(2)),
+              cx: parseFloat((orig.cx + dx).toFixed(2)),
+              cy: parseFloat((orig.cy + dy).toFixed(2)),
+            })
+          } else {
+            onUpdateObject(orig.id, {
+              x: parseFloat((orig.x + dx).toFixed(2)),
+              y: parseFloat((orig.y + dy).toFixed(2)),
+            })
+          }
+        })
+        return
+      }
+      
+      // Single object movement
+      const obj = scene.objects.find(o => o.id === selectedObjectIds[0]s[0])
       if (!obj) return
 
       // Move special-cases: keep multi-point objects coherent
       if (obj.type === 'line' || obj.type === 'arrow') {
         const rawStart = { x: dragOffset.x + dx, y: dragOffset.y + dy }
         const rawEnd = { x: dragOffset.x2 + dx, y: dragOffset.y2 + dy }
-        const snappedStart = snapPosition(rawStart.x, rawStart.y, selectedObjectId)
+        const snappedStart = snapPosition(rawStart.x, rawStart.y, selectedObjectIds[0]s[0])
         const delta = { x: snappedStart.x - rawStart.x, y: snappedStart.y - rawStart.y }
-        onUpdateObject(selectedObjectId, {
+        onUpdateObject(selectedObjectIds[0]s[0], {
           x: snappedStart.x,
           y: snappedStart.y,
           x2: parseFloat((rawEnd.x + delta.x).toFixed(2)),
@@ -2293,9 +2409,9 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         const rawStart = { x: dragOffset.x + dx, y: dragOffset.y + dy }
         const rawEnd = { x: dragOffset.x2 + dx, y: dragOffset.y2 + dy }
         const rawCtrl = { x: dragOffset.cx + dx, y: dragOffset.cy + dy }
-        const snappedStart = snapPosition(rawStart.x, rawStart.y, selectedObjectId)
+        const snappedStart = snapPosition(rawStart.x, rawStart.y, selectedObjectIds[0]s[0])
         const delta = { x: snappedStart.x - rawStart.x, y: snappedStart.y - rawStart.y }
-        onUpdateObject(selectedObjectId, {
+        onUpdateObject(selectedObjectIds[0]s[0], {
           x: snappedStart.x,
           y: snappedStart.y,
           x2: parseFloat((rawEnd.x + delta.x).toFixed(2)),
@@ -2329,7 +2445,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         
         // Update cursor position
         if (!isNaN(point.y) && isFinite(point.y)) {
-          onUpdateObject(selectedObjectId, { 
+          onUpdateObject(selectedObjectIds[0]s[0], { 
             x0: parseFloat(clampedX.toFixed(4)),
             x: offsetX + point.x,
             y: (axes || graph).y + point.y
@@ -2385,7 +2501,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           }
           
           // DON'T update x and y - keep graph at original position
-          onUpdateObject(selectedObjectId, {
+          onUpdateObject(selectedObjectIds[0]s[0], {
             formula: transformedFormula,
             xRange: newXRange,
             yRange: newYRange
@@ -2394,11 +2510,11 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       } else {
       const rawX = dragOffset.x + dx
       const rawY = dragOffset.y + dy
-      const snapped = snapPosition(rawX, rawY, selectedObjectId)
-      onUpdateObject(selectedObjectId, snapped)
+      const snapped = snapPosition(rawX, rawY, selectedObjectIds[0]s[0])
+      onUpdateObject(selectedObjectIds[0]s[0], snapped)
       }
     } else if (dragType === 'resize') {
-      const obj = scene.objects.find(o => o.id === selectedObjectId)
+      const obj = scene.objects.find(o => o.id === selectedObjectIds[0]s[0])
       if (!obj) return
       
       // Handle graph edge dragging to adjust xRange/yRange
@@ -2439,7 +2555,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           }
         }
         
-        onUpdateObject(selectedObjectId, {
+        onUpdateObject(selectedObjectIds[0], {
           xRange: newXRange,
           yRange: newYRange
         })
@@ -2463,7 +2579,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           }
 
           // Snap this vertex (absolute) to other shapes / grid, then convert back to relative
-          const abs = snapPosition(obj.x + newVX, obj.y + newVY, selectedObjectId)
+          const abs = snapPosition(obj.x + newVX, obj.y + newVY, selectedObjectIds[0])
           newVX = abs.x - obj.x
           newVY = abs.y - obj.y
           
@@ -2471,7 +2587,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
             x: parseFloat(newVX.toFixed(2)),
             y: parseFloat(newVY.toFixed(2))
           }
-          onUpdateObject(selectedObjectId, { vertices: verts })
+          onUpdateObject(selectedObjectIds[0], { vertices: verts })
           setDragStart({ x: e.clientX, y: e.clientY })
           setDragOffset({ ...dragOffset, vertices: verts })
         }
@@ -2494,7 +2610,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           }
 
           // Snap this vertex (absolute) to other shapes / grid, then convert back to relative
-          const abs = snapPosition(obj.x + newVX, obj.y + newVY, selectedObjectId)
+          const abs = snapPosition(obj.x + newVX, obj.y + newVY, selectedObjectIds[0])
           newVX = abs.x - obj.x
           newVY = abs.y - obj.y
           
@@ -2502,7 +2618,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
             x: parseFloat(newVX.toFixed(2)),
             y: parseFloat(newVY.toFixed(2))
           }
-          onUpdateObject(selectedObjectId, { vertices: verts })
+          onUpdateObject(selectedObjectIds[0], { vertices: verts })
           setDragStart({ x: e.clientX, y: e.clientY })
           setDragOffset({ ...dragOffset, vertices: verts })
         }
@@ -2573,7 +2689,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           updates.fontSize = newFontSize
         }
 
-        onUpdateObject(selectedObjectId, updates)
+        onUpdateObject(selectedObjectIds[0], updates)
         return
       }
       
@@ -2590,8 +2706,8 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
             newY = snappedAngle.y
           }
           
-          const snapped = snapPosition(newX, newY, selectedObjectId)
-          onUpdateObject(selectedObjectId, snapped)
+          const snapped = snapPosition(newX, newY, selectedObjectIds[0])
+          onUpdateObject(selectedObjectIds[0], snapped)
         } else if (activeHandle === 'end') {
           let newX2 = dragOffset.x2 + dx
           let newY2 = dragOffset.y2 + dy
@@ -2603,8 +2719,8 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
             newY2 = snappedAngle.y
           }
           
-          const snapped = snapPosition(newX2, newY2, selectedObjectId)
-          onUpdateObject(selectedObjectId, {
+          const snapped = snapPosition(newX2, newY2, selectedObjectIds[0])
+          onUpdateObject(selectedObjectIds[0], {
             x2: snapped.x,
             y2: snapped.y
           })
@@ -2616,16 +2732,16 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
       if (obj.type === 'arc') {
         if (activeHandle === 'start') {
           const raw = { x: dragOffset.x + dx, y: dragOffset.y + dy }
-          const snapped = snapPosition(raw.x, raw.y, selectedObjectId)
-          onUpdateObject(selectedObjectId, { x: snapped.x, y: snapped.y })
+          const snapped = snapPosition(raw.x, raw.y, selectedObjectIds[0]s[0])
+          onUpdateObject(selectedObjectIds[0]s[0], { x: snapped.x, y: snapped.y })
         } else if (activeHandle === 'end') {
           const raw = { x: dragOffset.x2 + dx, y: dragOffset.y2 + dy }
-          const snapped = snapPosition(raw.x, raw.y, selectedObjectId)
-          onUpdateObject(selectedObjectId, { x2: snapped.x, y2: snapped.y })
+          const snapped = snapPosition(raw.x, raw.y, selectedObjectIds[0]s[0])
+          onUpdateObject(selectedObjectIds[0]s[0], { x2: snapped.x, y2: snapped.y })
         } else if (activeHandle === 'control') {
           const raw = { x: dragOffset.cx + dx, y: dragOffset.cy + dy }
-          const snapped = snapPosition(raw.x, raw.y, selectedObjectId)
-          onUpdateObject(selectedObjectId, { cx: snapped.x, cy: snapped.y })
+          const snapped = snapPosition(raw.x, raw.y, selectedObjectIds[0]s[0])
+          onUpdateObject(selectedObjectIds[0]s[0], { cx: snapped.x, cy: snapped.y })
         }
         return
       }
@@ -2637,12 +2753,12 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           // Dragging x-axis endpoints
           const delta = activeHandle === 'right' ? dx : -dx
           const newXLength = Math.max(MIN_LENGTH, (dragOffset.xLength || 8) + delta * 2)
-          onUpdateObject(selectedObjectId, { xLength: parseFloat(newXLength.toFixed(2)) })
+          onUpdateObject(selectedObjectIds[0]s[0], { xLength: parseFloat(newXLength.toFixed(2)) })
         } else if (activeHandle === 'top' || activeHandle === 'bottom') {
           // Dragging y-axis endpoints
           const delta = activeHandle === 'top' ? dy : -dy
           const newYLength = Math.max(MIN_LENGTH, (dragOffset.yLength || 4) + delta * 2)
-          onUpdateObject(selectedObjectId, { yLength: parseFloat(newYLength.toFixed(2)) })
+          onUpdateObject(selectedObjectIds[0]s[0], { yLength: parseFloat(newYLength.toFixed(2)) })
         }
         return
       }
@@ -2673,7 +2789,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         
         // Update cursor position
         if (!isNaN(point.y) && isFinite(point.y)) {
-          onUpdateObject(selectedObjectId, { 
+          onUpdateObject(selectedObjectIds[0], { 
             x0: parseFloat(clampedX.toFixed(4)),
             x: offsetX + point.x,
             y: (axes || graph).y + point.y
@@ -2691,7 +2807,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
         // Snap radius to grid
         const snappedRadius = snapToGrid(newRadius, 0.25)
         
-        onUpdateObject(selectedObjectId, {
+        onUpdateObject(selectedObjectIds[0], {
           radius: parseFloat(snappedRadius.toFixed(2))
         })
       }
@@ -2699,6 +2815,35 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
   }
 
   const handleMouseUp = () => {
+    // Handle area selection completion
+    if (dragType === 'select-area' && selectionBox) {
+      const { startX, startY, endX, endY } = selectionBox
+      const minX = Math.min(startX, endX)
+      const maxX = Math.max(startX, endX)
+      const minY = Math.min(startY, endY)
+      const maxY = Math.max(startY, endY)
+      
+      // Convert selection box to Manim coordinates
+      const topLeft = canvasToManim(minX, minY)
+      const bottomRight = canvasToManim(maxX, maxY)
+      
+      // Find all objects that overlap with the selection box
+      const visibleObjects = getVisibleObjectsAtTime(scene.objects, currentTime)
+      const selectedIds = []
+      
+      for (const obj of visibleObjects) {
+        const bounds = getObjectBounds(obj)
+        // Check if object bounds overlap with selection box
+        if (bounds.maxX >= topLeft.x && bounds.minX <= bottomRight.x &&
+            bounds.maxY >= bottomRight.y && bounds.minY <= topLeft.y) {
+          selectedIds.push(obj.id)
+        }
+      }
+      
+      onSelectObjects(selectedIds)
+      setSelectionBox(null)
+    }
+    
     setIsDragging(false)
     setDragType(null)
     setActiveHandle(null)
@@ -2777,7 +2922,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
 
           {(() => {
             const obj = getVisibleObjectsAtTime(scene?.objects || [], currentTime)
-              .find(o => o.id === selectedObjectId && o.type === 'text')
+              .find(o => o.id === selectedObjectIds[0] && o.type === 'text')
             if (!obj) return null
             const pos = getTextRotateButtonPosition(obj)
             return (
@@ -2845,11 +2990,19 @@ function Canvas({ scene, currentTime = 0, selectedObjectId, onSelectObject, onUp
           <button
             className="canvas-context-item"
             onClick={() => {
-              if (contextMenu.objectId) onDuplicateObject?.(contextMenu.objectId)
+              if (contextMenu.objectId) {
+                if (selectedObjectIds.includes(contextMenu.objectId) && selectedObjectIds.length > 1) {
+                  // Duplicate all selected objects
+                  selectedObjectIds.forEach(id => onDuplicateObject?.(id))
+                } else {
+                  // Duplicate single object
+                  onDuplicateObject?.(contextMenu.objectId)
+                }
+              }
               setContextMenu({ open: false, x: 0, y: 0, objectId: null })
             }}
           >
-            Duplicate
+            Duplicate {selectedObjectIds.length > 1 ? `(${selectedObjectIds.length})` : ''}
           </button>
           <button
             className="canvas-context-item danger"

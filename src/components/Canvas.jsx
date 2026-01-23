@@ -215,7 +215,7 @@ function Canvas({ scene, currentTime = 0, selectedObjectIds = [], onSelectObject
   const rotateStartRef = useRef(null)
   
   // Link mode state
-  const selectedObjects = scene?.objects?.filter(o => selectedObjectIds[0]s.includes(o.id)) || []
+  const selectedObjects = scene?.objects?.filter(o => selectedObjectIds.includes(o.id)) || []
   const selectedObject = selectedObjects.length === 1 ? selectedObjects[0] : null
   const linkingStatus = selectedObject ? getLinkingStatus(selectedObject) : { needsLink: false, missingLinks: [], eligibleTargets: [] }
   const [linkModeActive, setLinkModeActive] = useState(false)

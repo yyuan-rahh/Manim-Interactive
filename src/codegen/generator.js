@@ -70,6 +70,44 @@ export function generateManimCode(project, activeSceneId) {
   return lines.join('\n')
 }
 
+/**
+ * Convert a user-entered math formula into a safe Python expression for Manim.
+ *
+ * This intentionally supports only a small whitelist to reduce the risk of Python injection
+ * when formulas are embedded into generated code.
+ */
+function safeFormulaToPython(formula) {
+  if (!formula || typeof formula !== 'string') return '0'
+  const src = formula.trim()
+  if (!src) return '0'
+
+  // Only allow a small set of characters. Disallow quotes/brackets/colons/equals/etc.
+  const invalidChar = /[^0-9a-zA-Z+\-*/^().,\s]/.test(src)
+  if (invalidChar) return '0'
+
+  // Only allow known identifiers (functions/constants) and variable x
+  const allowed = new Set(['x', 'sin', 'cos', 'tan', 'exp', 'log', 'ln', 'sqrt', 'abs', 'pi', 'e'])
+  const identifiers = src.match(/[A-Za-z_]+/g) || []
+  for (const ident of identifiers) {
+    if (ident.includes('_')) return '0'
+    if (!allowed.has(ident)) return '0'
+  }
+
+  // Normalize to Python / numpy
+  return src
+    .replace(/\^/g, '**')
+    .replace(/\bsin\b/g, 'np.sin')
+    .replace(/\bcos\b/g, 'np.cos')
+    .replace(/\btan\b/g, 'np.tan')
+    .replace(/\bexp\b/g, 'np.exp')
+    .replace(/\bln\b/g, 'np.log')
+    .replace(/\blog\b/g, 'np.log')
+    .replace(/\bsqrt\b/g, 'np.sqrt')
+    .replace(/\babs\b/g, 'np.abs')
+    .replace(/\bpi\b/g, 'np.pi')
+    .replace(/\be\b/g, 'np.e')
+}
+
 function generateDefaultAnimations(objects, { idToSourceVar, idToTargetVar }) {
   const out = []
 
@@ -329,16 +367,8 @@ function generateObjectCreation(obj, varName, objects = []) {
       const xMin = obj.xRange?.min ?? -5
       const xMax = obj.xRange?.max ?? 5
       
-      // Convert formula to Python syntax (x^2 -> x**2, etc.)
-      let pythonFormula = formula
-        .replace(/\^/g, '**')  // x^2 -> x**2
-        .replace(/sin/g, 'np.sin')
-        .replace(/cos/g, 'np.cos')
-        .replace(/tan/g, 'np.tan')
-        .replace(/exp/g, 'np.exp')
-        .replace(/log/g, 'np.log')
-        .replace(/sqrt/g, 'np.sqrt')
-        .replace(/abs/g, 'np.abs')
+      // Convert formula to safe Python syntax
+      const pythonFormula = safeFormulaToPython(formula)
       
       // If linked to axes, use axes coordinates
       const axesId = obj.axesId
@@ -369,15 +399,7 @@ ${varName} = VGroup(${axesVarName}, ${axesVarName}.plot(lambda x: ${pythonFormul
       if (!graph) return `${varName} = Dot(point=${pos}, radius=0.08, color=RED)  # Warning: No graph linked`
       
       const formula = graph.formula || 'x**2'
-      const pythonFormula = formula
-        .replace(/\^/g, '**')
-        .replace(/sin/g, 'np.sin')
-        .replace(/cos/g, 'np.cos')
-        .replace(/tan/g, 'np.tan')
-        .replace(/exp/g, 'np.exp')
-        .replace(/log/g, 'np.log')
-        .replace(/sqrt/g, 'np.sqrt')
-        .replace(/abs/g, 'np.abs')
+      const pythonFormula = safeFormulaToPython(formula)
       
       const x0 = obj.x0 ?? 0
       const fill = obj.fill ? colorToManim(obj.fill) : 'RED'
@@ -406,15 +428,7 @@ ${varName} = VGroup(${axesVarName}, ${axesVarName}.plot(lambda x: ${pythonFormul
       if (!graph) return `${varName} = Line(start=[0, 0, 0], end=[1, 1, 0], color=YELLOW)  # Warning: No graph linked`
       
       const formula = graph.formula || 'x**2'
-      const pythonFormula = formula
-        .replace(/\^/g, '**')
-        .replace(/sin/g, 'np.sin')
-        .replace(/cos/g, 'np.cos')
-        .replace(/tan/g, 'np.tan')
-        .replace(/exp/g, 'np.exp')
-        .replace(/log/g, 'np.log')
-        .replace(/sqrt/g, 'np.sqrt')
-        .replace(/abs/g, 'np.abs')
+      const pythonFormula = safeFormulaToPython(formula)
       
       // Get x0 from cursor or use direct x0
       let x0 = obj.x0 ?? 0
@@ -464,15 +478,7 @@ ${varName} = VGroup(${axesVarName}, ${axesVarName}.plot(lambda x: ${pythonFormul
       if (!graph) return `${varName} = VGroup()  # Warning: No graph linked`
       
       const formula = graph.formula || 'x**2'
-      const pythonFormula = formula
-        .replace(/\^/g, '**')
-        .replace(/sin/g, 'np.sin')
-        .replace(/cos/g, 'np.cos')
-        .replace(/tan/g, 'np.tan')
-        .replace(/exp/g, 'np.exp')
-        .replace(/log/g, 'np.log')
-        .replace(/sqrt/g, 'np.sqrt')
-        .replace(/abs/g, 'np.abs')
+      const pythonFormula = safeFormulaToPython(formula)
       
       // Get x0 from cursor or use direct x0
       let x0 = obj.x0 ?? 0
@@ -529,15 +535,7 @@ ${varName} = VGroup(${axesVarName}, ${axesVarName}.plot(lambda x: ${pythonFormul
       
       if (obj.valueType === 'slope' && graph && cursor) {
         const formula = graph.formula || 'x**2'
-        const pythonFormula = formula
-          .replace(/\^/g, '**')
-          .replace(/sin/g, 'np.sin')
-          .replace(/cos/g, 'np.cos')
-          .replace(/tan/g, 'np.tan')
-          .replace(/exp/g, 'np.exp')
-          .replace(/log/g, 'np.log')
-          .replace(/sqrt/g, 'np.sqrt')
-          .replace(/abs/g, 'np.abs')
+        const pythonFormula = safeFormulaToPython(formula)
         const x0 = cursor.x0 ?? 0
         const h = 0.001
         const f = `lambda x: ${pythonFormula}`
@@ -548,15 +546,7 @@ ${varName} = VGroup(${axesVarName}, ${axesVarName}.plot(lambda x: ${pythonFormul
         textValue = prefix || suffix ? `f"${prefix}{${x0}:.2f}${suffix}"` : `f"{${x0}:.2f}"`
       } else if (obj.valueType === 'y' && graph && cursor) {
         const formula = graph.formula || 'x**2'
-        const pythonFormula = formula
-          .replace(/\^/g, '**')
-          .replace(/sin/g, 'np.sin')
-          .replace(/cos/g, 'np.cos')
-          .replace(/tan/g, 'np.tan')
-          .replace(/exp/g, 'np.exp')
-          .replace(/log/g, 'np.log')
-          .replace(/sqrt/g, 'np.sqrt')
-          .replace(/abs/g, 'np.abs')
+        const pythonFormula = safeFormulaToPython(formula)
         const x0 = cursor.x0 ?? 0
         const f = `lambda x: ${pythonFormula}`
         const y = `(${f})(${x0})`

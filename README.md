@@ -56,6 +56,14 @@ This creates a distributable `.dmg` and `.zip` in the `release/` folder.
 5. **Preview**: Click "Preview" to render and play the animation
 6. **Save/Load**: Use the toolbar to save projects as JSON or open existing ones
 
+### AI Assistant (experimental)
+
+The app includes an **ops-based AI assistant** (click **AI** in the toolbar). It generates small patch operations against the project JSON (not raw Python), which improves safety and reliability.
+
+- **API key**: set `OPENAI_API_KEY` in your environment, or set it inside the AI modal settings (stored in Electron app settings).
+- **Model/Base URL**: configurable in the AI modal.
+- **Safety**: formulas embedded into generated Python are sanitized with a strict whitelist to reduce injection risk.
+
 ## Project Structure
 
 ```

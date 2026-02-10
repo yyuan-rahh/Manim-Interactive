@@ -18,6 +18,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   removeRenderLogListener: () => {
     ipcRenderer.removeAllListeners('render-log')
-  }
+  },
+
+  // App settings (stored in main process)
+  getAppSettings: () => ipcRenderer.invoke('get-app-settings'),
+  updateAppSettings: (partial) => ipcRenderer.invoke('update-app-settings', partial),
+
+  // AI agent (legacy ops-only)
+  agentGenerateOps: (payload) => ipcRenderer.invoke('agent-generate-ops', payload),
+
+  // AI multi-agent pipeline
+  agentGenerate: (payload) => ipcRenderer.invoke('agent-generate', payload),
+
+  // Agent progress listener
+  onAgentProgress: (callback) => {
+    ipcRenderer.on('agent-progress', (event, data) => callback(data))
+  },
+  removeAgentProgressListener: () => {
+    ipcRenderer.removeAllListeners('agent-progress')
+  },
+
+  // Code library
+  libraryAdd: (entry) => ipcRenderer.invoke('library-add', entry),
+  librarySearch: (prompt) => ipcRenderer.invoke('library-search', prompt),
 })
 

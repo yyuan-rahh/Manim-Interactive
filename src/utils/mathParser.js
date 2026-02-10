@@ -19,8 +19,10 @@ class MathParser {
     this.parser.functions.sqrt = Math.sqrt
     this.parser.functions.abs = Math.abs
     this.parser.functions.pow = Math.pow
-    this.parser.functions.pi = Math.PI
-    this.parser.functions.e = Math.E
+
+    // Constants (so users can write "pi" and "e")
+    this.parser.consts.pi = Math.PI
+    this.parser.consts.e = Math.E
   }
 
   /**

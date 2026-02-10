@@ -1,7 +1,7 @@
 import React from 'react'
 import './Toolbar.css'
 
-function Toolbar({ onSave, onLoad, onClearAll, canClearAll, onRender, isRendering, onLoadDemo }) {
+function Toolbar({ onSave, onLoad, onClearAll, canClearAll, onRender, isRendering, onLoadDemo, onOpenAI }) {
   return (
     <div className="toolbar">
       <div className="toolbar-brand">
@@ -41,6 +41,16 @@ function Toolbar({ onSave, onLoad, onClearAll, canClearAll, onRender, isRenderin
         
         <div className="toolbar-divider" />
         
+        {onOpenAI && (
+          <button
+            className="toolbar-btn"
+            onClick={onOpenAI}
+            title="AI Assistant (ops-based)"
+          >
+            <span className="btn-label">AI</span>
+          </button>
+        )}
+
         <button 
           className="toolbar-btn" 
           onClick={() => window.location.reload()}

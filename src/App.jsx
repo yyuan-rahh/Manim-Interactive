@@ -6,10 +6,12 @@ import CodePanel from './components/CodePanel'
 import Timeline from './components/Timeline'
 import Toolbar from './components/Toolbar'
 import VideoPreview from './components/VideoPreview'
+import AIAssistantModal from './components/AIAssistantModal'
 import { createEmptyProject, createEmptyScene, validateProject, createDemoScene } from './project/schema'
 import { generateManimCode, sanitizeClassName } from './codegen/generator'
 import { generateObjectName } from './utils/objectLabel'
 import { validateScene, getValidationSummary } from './utils/exportValidation'
+import { applyAgentOps } from './agent/ops'
 import './App.css'
 
 function App() {
@@ -26,6 +28,7 @@ function App() {
   const [isRendering, setIsRendering] = useState(false)
   const [videoData, setVideoData] = useState(null)
   const [showVideoPreview, setShowVideoPreview] = useState(false)
+  const [showAIModal, setShowAIModal] = useState(false)
 
   // Undo/redo history (captures project + selection + code state)
   const [history, setHistory] = useState({ past: [], future: [] })
@@ -567,6 +570,24 @@ function App() {
     selectedObjectIds.forEach(id => deleteObject(id))
   }, [deleteObject, selectedObjectIds])
 
+  const applyOpsFromAgent = useCallback((ops) => {
+    commit('ai:apply', () => {
+      const { project: nextProject, warnings } = applyAgentOps(project, ops, { defaultSceneId: activeSceneId })
+      setProject(nextProject)
+      if (!nextProject.scenes.find(s => s.id === activeSceneId)) {
+        setActiveSceneId(nextProject.scenes[0]?.id)
+      }
+      // Reduce selection to existing ids (agent may delete objects)
+      const nextActive = nextProject.scenes.find(s => s.id === (activeSceneId || nextProject.scenes[0]?.id)) || nextProject.scenes[0]
+      const idSet = new Set((nextActive?.objects || []).map(o => o.id))
+      setSelectedObjectIds(prev => prev.filter(id => idSet.has(id)))
+
+      if (warnings?.length) {
+        setRenderLogs(prev => prev + `\nAI warnings:\n${warnings.map(w => `- ${w}`).join('\n')}\n`)
+      }
+    })
+  }, [activeSceneId, commit, project])
+
   // Cmd+Z / Cmd+Shift+Z undo/redo + Delete/Backspace deletion (unless typing)
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -610,6 +631,7 @@ function App() {
         onRender={renderPreview}
         isRendering={isRendering}
         onLoadDemo={loadDemo}
+        onOpenAI={() => setShowAIModal(true)}
       />
       
       <div className="main-content">
@@ -696,6 +718,14 @@ function App() {
           onClose={() => setShowVideoPreview(false)}
         />
       )}
+
+      <AIAssistantModal
+        isOpen={showAIModal}
+        onClose={() => setShowAIModal(false)}
+        project={project}
+        activeSceneId={activeSceneId}
+        onApplyOps={applyOpsFromAgent}
+      />
     </div>
   )
 }

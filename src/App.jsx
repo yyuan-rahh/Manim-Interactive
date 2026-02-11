@@ -1,5 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react'
 import SceneList from './components/SceneList'
+import LibraryPanel from './components/LibraryPanel'
 import Canvas from './components/Canvas'
 import PropertiesPanel from './components/PropertiesPanel'
 import CodePanel from './components/CodePanel'
@@ -22,6 +23,7 @@ function App() {
   const [timelineHeight, setTimelineHeight] = useState(220)
   const [codePanelHeight, setCodePanelHeight] = useState(280)
   const [generatedCode, setGeneratedCode] = useState('')
+  const customCodeSyncRef = useRef(true) // tracks isCustomCodeSynced without causing re-renders
   const [customCode, setCustomCode] = useState('')
   const [isCustomCodeSynced, setIsCustomCodeSynced] = useState(true)
   const [renderLogs, setRenderLogs] = useState('')
@@ -29,6 +31,9 @@ function App() {
   const [videoData, setVideoData] = useState(null)
   const [showVideoPreview, setShowVideoPreview] = useState(false)
   const [showAIModal, setShowAIModal] = useState(false)
+  const [sidebarTab, setSidebarTab] = useState('library')
+  const [aiPrefillPrompt, setAiPrefillPrompt] = useState('')
+  const [libraryRefreshKey, setLibraryRefreshKey] = useState(0)
 
   // Undo/redo history (captures project + selection + code state)
   const [history, setHistory] = useState({ past: [], future: [] })
@@ -131,6 +136,7 @@ function App() {
       setSelectedObjectIds(prev.selectedObjectIds)
       setCustomCode(prev.customCode)
       setIsCustomCodeSynced(prev.isCustomCodeSynced)
+      customCodeSyncRef.current = prev.isCustomCodeSynced
       return { past: h.past.slice(0, -1), future: [cur, ...h.future] }
     })
   }, [])
@@ -145,6 +151,7 @@ function App() {
       setSelectedObjectIds(next.selectedObjectIds)
       setCustomCode(next.customCode)
       setIsCustomCodeSynced(next.isCustomCodeSynced)
+      customCodeSyncRef.current = next.isCustomCodeSynced
       return { past: [...h.past, cur], future: h.future.slice(1) }
     })
   }, [])
@@ -153,10 +160,13 @@ function App() {
   useEffect(() => {
     const code = generateManimCode(project, activeSceneId)
     setGeneratedCode(code)
-    // Always keep customCode synced with generated code
-    // This ensures the code display matches what will be rendered
-    setCustomCode(code)
-    setIsCustomCodeSynced(true)
+    // Only overwrite customCode if it was previously synced with generatedCode.
+    // When the AI sets custom Python code (isCustomCodeSynced = false), we must
+    // NOT clobber it when ops also update the project in the same Apply action.
+    if (customCodeSyncRef.current) {
+      setCustomCode(code)
+      setIsCustomCodeSynced(true)
+    }
   }, [project, activeSceneId])
 
   // Listen for render logs
@@ -469,46 +479,61 @@ function App() {
           setActiveSceneId(validated.scenes[0]?.id)
           setSelectedObjectIds([])
           setIsCustomCodeSynced(true)
+          customCodeSyncRef.current = true
         })
       }
     }
   }, [])
 
+  function extractSceneClassNameFromCode(code) {
+    if (!code || typeof code !== 'string') return null
+    // Matches classes like: class MyScene(Scene): / class MyScene(MovingCameraScene):
+    const match = code.match(/class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*[^)]*Scene[^)]*\)\s*:/m)
+    return match?.[1] || null
+  }
+
   // Render preview
   const renderPreview = useCallback(async () => {
     if (!window.electronAPI || !activeScene) return
-    
-    // Run export sanity checks
-    const validationIssues = validateScene(activeScene)
-    const summary = getValidationSummary(validationIssues)
-    
-    if (summary.errorCount > 0) {
-      // Show validation errors in logs
-      const errorMessages = validationIssues
-        .filter(i => i.level === 'error')
-        .map(i => `Error: ${i.message}`)
-        .join('\n')
-      setRenderLogs(`Export validation failed:\n${errorMessages}\n\nPlease fix these issues before rendering.`)
-      alert(`Cannot render: ${summary.errorCount} error(s) found. See render logs for details.`)
-      return
+
+    const usingCustomCode = !isCustomCodeSynced && !!customCode?.trim()
+
+    // Run export sanity checks only when rendering generated code from canvas state.
+    if (!usingCustomCode) {
+      const validationIssues = validateScene(activeScene)
+      const summary = getValidationSummary(validationIssues)
+
+      if (summary.errorCount > 0) {
+        // Show validation errors in logs
+        const errorMessages = validationIssues
+          .filter(i => i.level === 'error')
+          .map(i => `Error: ${i.message}`)
+          .join('\n')
+        setRenderLogs(`Export validation failed:\n${errorMessages}\n\nPlease fix these issues before rendering.`)
+        alert(`Cannot render: ${summary.errorCount} error(s) found. See render logs for details.`)
+        return
+      }
+
+      if (summary.warningCount > 0) {
+        // Show warnings but allow render
+        const warningMessages = validationIssues
+          .filter(i => i.level === 'warning')
+          .map(i => `Warning: ${i.message}`)
+          .join('\n')
+        setRenderLogs(`Warnings:\n${warningMessages}\n\nRendering anyway...\n`)
+      }
+    } else {
+      setRenderLogs(prev => prev + 'Rendering custom code from editor...\n')
     }
-    
-    if (summary.warningCount > 0) {
-      // Show warnings but allow render
-      const warningMessages = validationIssues
-        .filter(i => i.level === 'warning')
-        .map(i => `Warning: ${i.message}`)
-        .join('\n')
-      setRenderLogs(`Warnings:\n${warningMessages}\n\nRendering anyway...\n`)
-    }
-    
+
     setIsRendering(true)
     setRenderLogs(prev => prev + 'Starting render...\n')
     setVideoData(null)
-    
-    const sceneName = sanitizeClassName(activeScene.name)
-    // Always use the generated code that matches the current canvas state
-    const codeToRender = generatedCode
+
+    const codeToRender = usingCustomCode ? customCode : generatedCode
+    const sceneName = usingCustomCode
+      ? (extractSceneClassNameFromCode(codeToRender) || sanitizeClassName(activeScene.name))
+      : sanitizeClassName(activeScene.name)
     const result = await window.electronAPI.renderManim({
       pythonCode: codeToRender,
       sceneName,
@@ -529,12 +554,13 @@ function App() {
     }
     
     setIsRendering(false)
-  }, [activeScene, generatedCode, customCode])
+  }, [activeScene, generatedCode, customCode, isCustomCodeSynced])
 
   const handleCodeChange = useCallback((newCode) => {
     commit('code:edit', () => {
       setCustomCode(newCode)
       setIsCustomCodeSynced(false)
+      customCodeSyncRef.current = false
     })
   }, [])
 
@@ -588,6 +614,14 @@ function App() {
     })
   }, [activeSceneId, commit, project])
 
+  const applyPythonCodeFromAgent = useCallback((pythonCode, sceneName) => {
+    // For Python mode: set the code panel directly with the AI-generated code
+    setCustomCode(pythonCode)
+    setIsCustomCodeSynced(false)
+    customCodeSyncRef.current = false // prevent useEffect from overwriting
+    setRenderLogs(prev => prev + `\n[AI] Applied Python code (scene: ${sceneName || 'unknown'})\n`)
+  }, [])
+
   // Cmd+Z / Cmd+Shift+Z undo/redo + Delete/Backspace deletion (unless typing)
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -635,16 +669,44 @@ function App() {
       />
       
       <div className="main-content">
-        <SceneList
-          scenes={project.scenes}
-          activeSceneId={activeSceneId}
-          onSelectScene={setActiveSceneId}
-          onAddScene={addScene}
-          onDeleteScene={deleteScene}
-          onRenameScene={renameScene}
-          onDuplicateScene={duplicateScene}
-          onReorderScenes={reorderScenes}
-        />
+        <div className="left-sidebar">
+          <div className="sidebar-tabs">
+            <button
+              className={`sidebar-tab ${sidebarTab === 'library' ? 'active' : ''}`}
+              onClick={() => setSidebarTab('library')}
+            >
+              Library
+            </button>
+            <button
+              className={`sidebar-tab ${sidebarTab === 'scenes' ? 'active' : ''}`}
+              onClick={() => setSidebarTab('scenes')}
+            >
+              Scenes
+            </button>
+          </div>
+          {sidebarTab === 'library' ? (
+            <LibraryPanel
+              refreshKey={libraryRefreshKey}
+              onApplyOps={applyOpsFromAgent}
+              onApplyPythonCode={applyPythonCodeFromAgent}
+              onUseAsPrompt={(p) => {
+                setAiPrefillPrompt(p)
+                setShowAIModal(true)
+              }}
+            />
+          ) : (
+            <SceneList
+              scenes={project.scenes}
+              activeSceneId={activeSceneId}
+              onSelectScene={setActiveSceneId}
+              onAddScene={addScene}
+              onDeleteScene={deleteScene}
+              onRenameScene={renameScene}
+              onDuplicateScene={duplicateScene}
+              onReorderScenes={reorderScenes}
+            />
+          )}
+        </div>
         
         <div className="center-panel" ref={centerPanelRef}>
           <div className="canvas-panel">
@@ -721,10 +783,12 @@ function App() {
 
       <AIAssistantModal
         isOpen={showAIModal}
-        onClose={() => setShowAIModal(false)}
+        onClose={() => { setShowAIModal(false); setAiPrefillPrompt(''); setLibraryRefreshKey(k => k + 1) }}
         project={project}
         activeSceneId={activeSceneId}
         onApplyOps={applyOpsFromAgent}
+        onApplyPythonCode={applyPythonCodeFromAgent}
+        prefillPrompt={aiPrefillPrompt}
       />
     </div>
   )

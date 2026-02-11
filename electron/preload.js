@@ -41,5 +41,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Code library
   libraryAdd: (entry) => ipcRenderer.invoke('library-add', entry),
   librarySearch: (prompt) => ipcRenderer.invoke('library-search', prompt),
+  libraryGetAll: () => ipcRenderer.invoke('library-get-all'),
+  libraryDelete: (id) => ipcRenderer.invoke('library-delete', id),
 })
 

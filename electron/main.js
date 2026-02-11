@@ -442,10 +442,26 @@ function searchLibrary(prompt) {
   const lib = readLibrary()
   if (!lib.snippets?.length) return []
   const words = prompt.toLowerCase().split(/\s+/).filter(w => w.length > 2)
+
+  // Extract math expressions from prompt (e.g. "x^2+3", "sin(x)")
+  const mathExprs = (prompt.match(/[a-z0-9^+\-*/()]+/gi) || [])
+    .filter(e => /[a-z].*[\d^]|[\d].*[a-z]/i.test(e)) // must mix letters and digits/operators
+
   return lib.snippets
     .map(s => {
       const haystack = `${s.prompt} ${s.description} ${(s.tags || []).join(' ')}`.toLowerCase()
-      const score = words.reduce((acc, w) => acc + (haystack.includes(w) ? 1 : 0), 0)
+      // Word match score
+      let score = words.reduce((acc, w) => acc + (haystack.includes(w) ? 1 : 0), 0)
+
+      // Formula similarity bonus: if both have math-like expressions sharing a base
+      for (const expr of mathExprs) {
+        const base = expr.replace(/[+\-]\s*\d+$/, '').toLowerCase() // strip trailing constant
+        if (base.length > 1 && haystack.includes(base)) score += 2
+      }
+
+      // Bonus for entries with ops (more reusable on canvas)
+      if (s.ops?.length) score += 0.5
+
       return { ...s, _score: score }
     })
     .filter(s => s._score > 0)
@@ -464,11 +480,29 @@ function addToLibrary(entry) {
     sceneName: entry.sceneName || '',
     mode: entry.mode || 'python',
     ops: entry.ops || null,
+    videoThumbnail: entry.videoThumbnail || '',
     createdAt: new Date().toISOString(),
   })
   // Keep library manageable
   if (lib.snippets.length > 200) lib.snippets = lib.snippets.slice(-200)
   writeLibrary(lib)
+}
+
+function deleteFromLibrary(id) {
+  if (!id) return false
+  const lib = readLibrary()
+  const before = lib.snippets.length
+  lib.snippets = lib.snippets.filter(s => s.id !== id)
+  if (lib.snippets.length < before) {
+    writeLibrary(lib)
+    return true
+  }
+  return false
+}
+
+function getAllLibraryEntries() {
+  const lib = readLibrary()
+  return lib.snippets || []
 }
 
 // ── GitHub Manim search ─────────────────────────────────────────
@@ -577,32 +611,78 @@ function renderManimInternal({ pythonCode, sceneName, quality = 'low' }) {
 // ── Pipeline stages ─────────────────────────────────────────────
 
 const OPS_PROPERTY_SCHEMA = `
-IMPORTANT - Object property names the canvas renderer expects:
-- Shapes (rectangle, circle, triangle, polygon): fill (hex color e.g. "#3b82f6"), stroke (hex), strokeWidth (number), opacity (0-1), x, y, rotation
-- circle: also radius (number)
-- rectangle: also width, height
-- line, arrow: x, y, x2, y2, stroke (hex), strokeWidth
-- arc: x, y, x2, y2, cx, cy, stroke (hex), strokeWidth
-- dot: radius, fill (hex)
-- text: text (string), fontSize (number), fill (hex)
-- latex: latex (string), fill (hex)
-- axes: xRange {min,max,step}, yRange {min,max,step}
-- graph: formula (string using x, e.g. "x^2"), axesId (id of axes object)
+COMPLETE object property reference for the canvas renderer.
+ALL objects share: x, y, rotation, opacity (0-1), fill (hex), stroke (hex), strokeWidth (number).
+
+BASIC SHAPES:
+- circle: radius (number)
+- rectangle: width, height
+- triangle: vertices (array of 3 {x,y})
+- polygon: vertices (array of {x,y}), sides, radius
+- line: x, y, x2, y2, stroke, strokeWidth
+- arrow: x, y, x2, y2, stroke, strokeWidth
+- arc: x, y, x2, y2, cx, cy, stroke, strokeWidth
+- dot: radius (default 0.1), fill
+
+TEXT:
+- text: text (string), fontSize (number, default 48), fill
+- latex: latex (string, e.g. "\\\\frac{a}{b}"), fill
+
+GRAPH FAMILY (link via IDs):
+- axes: xRange {min,max,step}, yRange {min,max,step}, xLength (default 8), yLength (default 4), stroke, strokeWidth, showTicks (bool), xLabel ("x"), yLabel ("y")
+- graph: formula (string, e.g. "x^2"), axesId (ID of axes object), xRange {min,max}, yRange {min,max}, stroke, strokeWidth
+- graphCursor: graphId (ID of graph), axesId, x0 (number, position on graph), fill, radius (default 0.08), showCrosshair, showDot, showLabel
+- tangentLine: graphId, cursorId (optional, ID of graphCursor), axesId, x0, derivativeStep (default 0.001), visibleSpan (default 2), stroke, strokeWidth
+- limitProbe: graphId, cursorId, axesId, x0, direction ("left"/"right"/"both"), deltaSchedule (array e.g. [1,0.5,0.1,0.01]), fill, radius
+- valueLabel: graphId, cursorId, valueType ("slope"/"x"/"y"/"custom"), labelPrefix, labelSuffix, customExpression, fontSize, fill, showBackground, backgroundFill, backgroundOpacity
+
+TIMING & ANIMATION (on every object):
+- delay (number, seconds) - when the object enters (default 0)
+- runTime (number, seconds) - how long the object is visible. For persistent objects use the scene duration. For transient effects use a short value.
+- animationType: "auto", "Create", "FadeIn", "GrowFromCenter", "Write", "DrawBorderThenFill"
+- exitAnimationType: "FadeOut", "Uncreate", "ShrinkToCenter"
+- transformFromId (string, optional) - ID of object this morphs from
+- transformType (string, optional) - "Transform", "ReplacementTransform", "FadeTransform"
+
+LINKING RULES:
+When adding graph-family objects, add axes FIRST then reference its ID. Use deterministic IDs like "axes-1", "graph-1", "cursor-1".
+Example: axes id="axes-1", then graph with axesId="axes-1" id="graph-1", then graphCursor with graphId="graph-1" axesId="axes-1".
 
 CRITICAL: Use "fill" for fill color, "stroke" for stroke/border color. Do NOT use "fillColor", "strokeColor", "color". Colors must be hex strings like "#3b82f6".
-
-Example circle: {"type":"circle","x":0,"y":0,"radius":1.5,"fill":"#3b82f6","stroke":"#ffffff","strokeWidth":2,"opacity":1}
-Example text:   {"type":"text","x":0,"y":2,"text":"Hello","fontSize":48,"fill":"#ffffff"}
+Formulas must use x and basic functions: sin, cos, tan, exp, log/ln, sqrt, abs, pi, e.
 `.trim()
 
 async function classifyPrompt(prompt) {
   sendProgress('classifying', 'Analyzing prompt...')
+
+  // Check if a strong library match exists — bias toward its mode
+  const libraryMatches = searchLibrary(prompt)
+  const topMatch = libraryMatches[0]
+  let libraryHint = ''
+  if (topMatch && topMatch._score >= 3) {
+    libraryHint = `\n\nHINT: A very similar request ("${topMatch.prompt}") was previously handled in "${topMatch.mode}" mode. Prefer using "${topMatch.mode}" mode unless the new request is fundamentally different.`
+  }
+
   const sys = `You classify user prompts for a Manim animation editor.
 Return ONLY a JSON object: {"mode":"ops"|"python","searchTerms":["term1","term2"]}
-- "ops" mode: simple requests like adding/moving/coloring single objects, changing text, basic property changes.
-- "python" mode: complex animations, math visualizations, multi-step animations, transforms, anything requiring custom Manim code (derivatives, integrals, 3D, morphing, etc.).
-searchTerms: 2-4 short search queries useful for finding Manim code examples on GitHub (only for python mode, empty array for ops mode).
-No markdown, no explanation.`
+
+"ops" mode is ONLY for the simplest requests:
+- Adding a SINGLE static shape (circle, rectangle, text, dot)
+- Changing a color or position of one object
+- Renaming a scene, changing duration
+- Basic property edits
+
+"python" mode is for EVERYTHING ELSE, including:
+- ANY animation (moving, transforming, fading, morphing)
+- Multiple objects interacting
+- Math visualizations (derivatives, integrals, graphs, tangent lines, limits)
+- Anything involving timing, sequences, or motion
+- 3D scenes, camera movements
+- Educational content with labels and annotations
+- Any request mentioning "animate", "show", "explain", "visualize", "demonstrate"
+
+searchTerms: 2-4 Manim-specific search queries for GitHub (only for python mode, empty for ops).
+No markdown, no code fences, no explanation. Just the JSON.${libraryHint}`
 
   const content = await llmChat([
     { role: 'system', content: sys },
@@ -614,7 +694,7 @@ No markdown, no explanation.`
   return { mode: 'ops', searchTerms: [] }
 }
 
-async function generateOps({ prompt, project, activeSceneId }) {
+async function generateOps({ prompt, project, activeSceneId, libraryOps }) {
   sendProgress('generating', 'Generating animation...')
 
   const allowedObjectTypes = [
@@ -622,19 +702,38 @@ async function generateOps({ prompt, project, activeSceneId }) {
     'axes','graph','graphCursor','tangentLine','limitProbe','valueLabel',
   ]
 
+  const scene = project?.scenes?.find(s => s.id === activeSceneId) || project?.scenes?.[0]
+  const sceneDuration = scene?.duration || 5
+
+  let librarySection = ''
+  if (libraryOps?.length) {
+    librarySection = '\n\nPREVIOUSLY SUCCESSFUL OPS FROM LIBRARY (adapt if similar to user request):\n'
+    for (const m of libraryOps.slice(0, 2)) {
+      librarySection += `\n--- "${m.prompt}" ---\n${JSON.stringify(m.ops, null, 2)}\n`
+    }
+  }
+
   const system = [
     'You are an in-app agent for a Manim animation editor.',
     'You must output ONLY a single JSON object with keys: summary (string) and ops (array). No markdown, no code fences.',
     'Your ops must be small patches to an existing project JSON. Do NOT output Python.',
     'Prefer editing/adding objects inside the active scene.',
-    'Allowed op types: addObject, updateObject, deleteObject, addKeyframe, setSceneDuration, renameScene, addScene, deleteScene.',
+    'Allowed op types (MUST use exact camelCase): addObject, updateObject, deleteObject, addKeyframe, setSceneDuration, renameScene, addScene, deleteScene.',
+    'IMPORTANT: op type must be camelCase like "addObject" NOT "add_object".',
     `Allowed object types: ${allowedObjectTypes.join(', ')}.`,
     '',
     OPS_PROPERTY_SCHEMA,
     '',
+    `The current scene duration is ${sceneDuration}s. For persistent objects (user says "add", "create", "make"), set runTime to ${sceneDuration}. For transient effects, use a shorter runTime.`,
+    '',
+    'Full addObject example:',
+    `{"summary":"Added a blue circle","ops":[{"type":"addObject","sceneId":"scene-1","object":{"type":"circle","x":0,"y":0,"radius":1.5,"fill":"#3b82f6","stroke":"#ffffff","strokeWidth":2,"opacity":1,"delay":0,"runTime":${sceneDuration},"animationType":"auto"}}]}`,
+    '',
     'Safety constraints:',
-    '- Never introduce arbitrary code strings in formulas. Formulas must be standard math using x and basic functions: sin, cos, tan, exp, log/ln, sqrt, abs, pi, e.',
+    '- Never introduce arbitrary code strings in formulas.',
     '- Keep changes minimal and deterministic.',
+    '- No markdown wrapping. Output raw JSON only.',
+    librarySection,
   ].join('\n')
 
   const user = [
@@ -660,7 +759,10 @@ async function generatePython({ prompt, project, activeSceneId, libraryMatches, 
 
   let contextSection = ''
   if (libraryMatches?.length) {
-    contextSection += '\n\nPREVIOUSLY SUCCESSFUL CODE FROM LOCAL LIBRARY (use as reference):\n'
+    contextSection += '\n\nPREVIOUSLY SUCCESSFUL CODE FROM LOCAL LIBRARY:\n'
+    contextSection += 'The following code was previously generated and rendered successfully.\n'
+    contextSection += 'If it is SIMILAR to what the user wants, ADAPT it rather than writing from scratch.\n'
+    contextSection += 'Make MINIMAL changes to fulfill the new request (e.g., replace x**2 with x**2 + 3, change colors, adjust parameters).\n'
     for (const m of libraryMatches.slice(0, 2)) {
       contextSection += `\n--- "${m.prompt}" ---\n${m.pythonCode}\n`
     }
@@ -707,50 +809,173 @@ async function generatePython({ prompt, project, activeSceneId, libraryMatches, 
   }
 }
 
-async function reviewOutput({ prompt, mode, result }) {
+async function extractOpsFromPython({ pythonCode, project, activeSceneId }) {
+  sendProgress('extracting', 'Extracting canvas objects from Python code...')
+
+  const scene = project?.scenes?.find(s => s.id === activeSceneId) || project?.scenes?.[0]
+  const sceneDuration = scene?.duration || 5
+
+  const system = [
+    'You are a Manim CE code analyzer. Given Manim Python code, extract the KEY STRUCTURAL visual objects into a JSON ops array for a 2D canvas editor.',
+    '',
+    'IMPORTANT PRINCIPLES:',
+    '1. ACCURACY over completeness — only extract objects you can PRECISELY position and describe.',
+    '2. Skip objects created in loops (e.g., multiple rectangles in a for-loop). Instead, represent the overall structure (e.g., one axes + one graph).',
+    '3. The canvas uses Manim coordinates: x ranges roughly -7 to 7, y ranges -4 to 4. Origin (0,0) is center.',
+    '4. Read .move_to(), .shift(), .to_edge(), .next_to() etc. carefully to determine final x,y positions.',
+    '5. For grouped objects (VGroup, etc.), estimate the position of the group center.',
+    '',
+    'WHAT TO EXTRACT (priority order):',
+    '- Axes objects → type:"axes" with exact x_range, y_range',
+    '- Plotted functions (axes.plot) → type:"graph" with formula and axesId',
+    '- Title text (Text/MathTex at top) → type:"text" or "latex"',
+    '- Key labels/formulas (MathTex) → type:"latex"',
+    '- Individual named shapes (Circle, Rectangle, Arrow, Line, Dot) with explicit parameters',
+    '- Tangent lines → type:"tangentLine"',
+    '- Moving dots on graphs → type:"graphCursor"',
+    '',
+    'WHAT TO SKIP:',
+    '- Objects created inside for-loops or list comprehensions (e.g., Riemann sum rectangles)',
+    '- Purely decorative elements that are hard to position precisely',
+    '- Temporary animation intermediaries that get transformed away',
+    '- VGroup children when the group itself represents the concept better',
+    '',
+    OPS_PROPERTY_SCHEMA,
+    '',
+    'POSITION MAPPING (critical for accuracy):',
+    '- Axes position: default (0,0), but check .shift() or .move_to(). Axes(..).shift(LEFT) means x=-1',
+    '- .to_edge(UP) → y≈3.5, .to_edge(DOWN) → y≈-3.5, .to_edge(LEFT) → x≈-6, .to_edge(RIGHT) → x≈6',
+    '- .to_corner(UL) → x≈-6, y≈3.5. .to_corner(UR) → x≈6, y≈3.5',
+    '- .next_to(obj, RIGHT) → x = obj.x + obj.width/2 + 0.5 (approx)',
+    '- UP = [0,1,0], DOWN = [0,-1,0], LEFT = [-1,0,0], RIGHT = [1,0,0]',
+    '- .shift(LEFT*2) → subtract 2 from x. .shift(UP*1.5) → add 1.5 to y',
+    '',
+    'COLOR MAPPING:',
+    '- BLUE/BLUE_C → "#3b82f6", RED → "#ef4444", GREEN → "#22c55e", YELLOW → "#eab308"',
+    '- ORANGE → "#f97316", PURPLE → "#a855f7", PINK → "#ec4899", WHITE → "#ffffff"',
+    '- TEAL/TEAL_C → "#14b8a6", GRAY → "#6b7280", GOLD → "#ca8a04"',
+    '- fill_opacity → opacity (default 1 for shapes with fill_color)',
+    '',
+    'FORMULA EXTRACTION:',
+    '- lambda x: x**2 → formula:"x^2"',
+    '- lambda x: np.exp(x) → formula:"exp(x)"',
+    '- lambda x: np.sin(x) → formula:"sin(x)"',
+    '- lambda x: x**2 + 3 → formula:"x^2+3"',
+    '',
+    'TIMING:',
+    '- Walk through self.play() and self.wait() calls sequentially to compute delay for each object.',
+    '- Each self.play(..., run_time=T) advances time by T (default 1). Each self.wait(T) advances by T.',
+    `- For persistent objects, set runTime = ${sceneDuration} - delay.`,
+    '',
+    'TRANSFORMS: If Transform(a, b) or ReplacementTransform(a, b), set transformFromId on b pointing to a\'s ID.',
+    '',
+    'USE DETERMINISTIC IDs: "axes-1", "graph-1", "text-1", "latex-1", etc.',
+    '',
+    'Return ONLY a JSON object: {"ops":[{"type":"addObject","sceneId":"SCENE_ID","object":{...}}, ...]}',
+    'No markdown, no code fences.',
+  ].join('\n')
+
+  const user = [
+    'PYTHON CODE:', pythonCode, '',
+    `Active scene ID: ${activeSceneId || scene?.id || 'scene-1'}`,
+    `Scene duration: ${sceneDuration}s`,
+  ].join('\n')
+
+  try {
+    const content = await llmChat([
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ])
+    const parsed = extractFirstJsonObject(content)
+    if (parsed?.ops && Array.isArray(parsed.ops)) return parsed.ops
+  } catch { /* extraction is best-effort */ }
+  return []
+}
+
+async function reviewOutput({ prompt, mode, result, manimCode }) {
   sendProgress('reviewing', 'Reviewing quality...')
 
-  const reviewSystem = [
-    'You are a quality reviewer for a Manim animation editor.',
-    'You receive the user\'s original prompt and the generated output.',
-    'Check that the output CORRECTLY implements the user\'s request.',
+  const MANIM_COLOR_RULES = `
+CRITICAL Manim color rules — check the ACTUAL PYTHON CODE for ALL of these:
+1. fill_color= must be set to match the user's requested color.  If the user says "blue circle", the Python must have fill_color=BLUE (or a hex).
+2. fill_opacity= must be > 0 (typically 1) for the fill to be visible.  A Circle(fill_color=BLUE) with NO fill_opacity will appear as an empty outline!
+3. stroke_color= sets the border/outline color.
+4. Do NOT confuse fill vs stroke: "a blue circle" means fill_color=BLUE fill_opacity=1, NOT stroke_color=BLUE.
+5. Check for common mistakes: missing fill_opacity, wrong color name, fill_color set but fill_opacity=0 or missing.
+`.trim()
+
+  const reviewSystem = mode === 'ops' ? [
+    'You are a STRICT quality reviewer for a Manim animation editor.',
+    'You receive: (1) the user\'s original prompt, (2) the JSON ops for the canvas editor, (3) the ACTUAL Manim Python code that will render the preview.',
     '',
-    mode === 'ops' ? [
-      'The output is JSON ops for the editor.',
-      OPS_PROPERTY_SCHEMA,
-      'Verify: correct object types, colors match description (as hex), positions make sense, property names are correct.',
-      'Return a JSON object: {"approved":true/false,"corrections":"explanation of changes if any","summary":"...","ops":[corrected ops array]}',
-    ].join('\n') : [
-      'The output is Manim CE Python code.',
-      'Verify: code is syntactically valid, uses correct Manim CE API, colors/shapes/animations match the user\'s description.',
-      'Return a JSON object: {"approved":true/false,"corrections":"explanation of changes if any","summary":"...","sceneName":"...","pythonCode":"corrected code if needed"}',
-    ].join('\n'),
+    'YOUR JOB: Check the Manim Python code line-by-line to ensure it correctly renders what the user asked for.',
     '',
-    'If the output is correct, return it unchanged with approved:true.',
-    'If you make corrections, set approved:false and explain in corrections field.',
-    'No markdown, no code fences around the JSON.',
+    OPS_PROPERTY_SCHEMA,
+    '',
+    MANIM_COLOR_RULES,
+    '',
+    'REVIEW CHECKLIST:',
+    '- Does every object from the user\'s prompt appear in the Python code?',
+    '- For each object, is fill_color set correctly? Is fill_opacity > 0 if the user wants a filled shape?',
+    '- Are positions, sizes, and animations reasonable?',
+    '- Does the ops JSON match the Python code?',
+    '',
+    'If the ops need corrections, fix both the ops AND provide corrected Python code.',
+    'Return ONLY a JSON object:',
+    '{"approved":true/false,"corrections":"explanation","summary":"user-friendly description","ops":[corrected ops],"pythonCode":"corrected python if needed"}',
+    'If everything is correct, return ops unchanged and pythonCode unchanged with approved:true.',
+    'No markdown, no code fences.',
+  ].join('\n') : [
+    'You are a STRICT quality reviewer for Manim CE Python code.',
+    'You receive: (1) the user\'s original prompt, (2) the generated Manim Python code.',
+    '',
+    MANIM_COLOR_RULES,
+    '',
+    'REVIEW CHECKLIST:',
+    '- Is the code syntactically valid Python?',
+    '- Does it use correct Manim CE API? (e.g., Circle, Rectangle, MathTex, not LaTeX)',
+    '- Colors: For EVERY shape the user mentioned with a color, verify fill_color= AND fill_opacity= are set correctly.',
+    '- Animations: Are they appropriate (Create, FadeIn, Write, etc.)?',
+    '- Does the output match what the user actually asked for?',
+    '',
+    'Return ONLY a JSON object:',
+    '{"approved":true/false,"corrections":"explanation","summary":"user-friendly description","sceneName":"...","pythonCode":"corrected code"}',
+    'No markdown, no code fences.',
   ].join('\n')
 
-  const reviewUser = [
-    'ORIGINAL USER PROMPT:', prompt, '',
-    'GENERATED OUTPUT:', JSON.stringify(result, null, 2),
-  ].join('\n')
+  const userParts = ['ORIGINAL USER PROMPT:', prompt, '']
+  if (mode === 'ops') {
+    userParts.push('OPS JSON:', JSON.stringify(result, null, 2), '')
+    userParts.push('MANIM PYTHON CODE THAT WILL BE RENDERED:', manimCode || '(none)', '')
+    userParts.push('CHECK THE PYTHON CODE ABOVE. If fill_opacity is missing for colored shapes, that is a BUG you must fix.')
+  } else {
+    userParts.push('GENERATED PYTHON CODE:', result.pythonCode || '(none)')
+  }
 
   const content = await llmChat([
     { role: 'system', content: reviewSystem },
-    { role: 'user', content: reviewUser },
+    { role: 'user', content: userParts.join('\n') },
   ])
 
   const parsed = extractFirstJsonObject(content)
-  if (!parsed) return result // If reviewer fails to parse, use original
-  return {
+  if (!parsed) return { ...result, manimCode } // If reviewer fails to parse, use original
+
+  const reviewResult = {
     summary: parsed.summary || result.summary || '',
-    ...(mode === 'ops'
-      ? { ops: Array.isArray(parsed.ops) ? parsed.ops : result.ops }
-      : { sceneName: parsed.sceneName || result.sceneName, pythonCode: parsed.pythonCode || result.pythonCode }),
     corrections: parsed.corrections || null,
     approved: parsed.approved !== false,
   }
+
+  if (mode === 'ops') {
+    reviewResult.ops = Array.isArray(parsed.ops) ? parsed.ops : result.ops
+    // If reviewer provided corrected python, use it; otherwise keep original
+    reviewResult.manimCode = parsed.pythonCode || manimCode
+  } else {
+    reviewResult.sceneName = parsed.sceneName || result.sceneName
+    reviewResult.pythonCode = parsed.pythonCode || result.pythonCode
+  }
+
+  return reviewResult
 }
 
 // ── Main pipeline IPC handler ───────────────────────────────────
@@ -800,17 +1025,39 @@ ipcMain.handle('agent-generate', async (event, payload) => {
       generatorResult = await generatePython({
         prompt: effectivePrompt, project, activeSceneId, libraryMatches, onlineExamples,
       })
+
+      // NEW: Extract canvas ops from the generated Python code
+      generatorResult._extractedOps = await extractOpsFromPython({
+        pythonCode: generatorResult.pythonCode, project, activeSceneId,
+      })
     } else {
+      // ── Stage 2b: Search library for ops matches ──
+      const libraryOps = searchLibrary(prompt).filter(m => m.ops?.length)
+
       // ── Stage 3b: Generate Ops ──
       const effectivePrompt = previousResult
         ? `Previous result context:\n${JSON.stringify(previousResult, null, 2)}\n\nUser follow-up: ${prompt}`
         : prompt
 
-      generatorResult = await generateOps({ prompt: effectivePrompt, project, activeSceneId })
+      generatorResult = await generateOps({ prompt: effectivePrompt, project, activeSceneId, libraryOps })
     }
 
     // ── Stage 4: Review ──
-    const reviewed = await reviewOutput({ prompt, mode, result: generatorResult })
+    // For ops mode, generate the Manim Python code FIRST so the reviewer can inspect it
+    let preManimCode = null
+    if (mode === 'ops') {
+      const preObjects = []
+      for (const op of (generatorResult.ops || [])) {
+        if (op.type === 'addObject' && op.object) preObjects.push(op.object)
+      }
+      const scene = project?.scenes?.find(s => s.id === activeSceneId) || project?.scenes?.[0]
+      if (scene?.objects) {
+        for (const obj of scene.objects) preObjects.push(obj)
+      }
+      preManimCode = opsToManimCode(preObjects)
+    }
+
+    const reviewed = await reviewOutput({ prompt, mode, result: generatorResult, manimCode: preManimCode })
 
     // ── Stage 5: Auto-render ──
     sendProgress('rendering', 'Rendering preview...')
@@ -841,12 +1088,37 @@ ipcMain.handle('agent-generate', async (event, payload) => {
         }
       }
     } else {
-      // For ops mode: we need to generate Manim code from the ops to render a preview.
-      // Apply ops to a temp copy of the project, then use codegen.
-      // We import the codegen module dynamically since it's an ES module in the renderer.
-      // Instead, we build minimal Manim code from the ops directly.
-      renderResult = await renderOpsPreview({ ops: reviewed.ops, project, activeSceneId })
+      // For ops mode: use the reviewed Manim code (reviewer may have corrected it)
+      const finalManimCode = reviewed.manimCode || preManimCode
+      if (!finalManimCode) {
+        renderResult = { success: false, error: 'No Manim code to render' }
+      } else {
+        renderResult = await renderManimInternal({ pythonCode: finalManimCode, sceneName: 'Preview' })
+
+        // If reviewed code fails, try regenerating from the reviewed ops
+        if (!renderResult.success && reviewed.ops) {
+          const retryObjects = []
+          for (const op of reviewed.ops) {
+            if (op.type === 'addObject' && op.object) retryObjects.push(op.object)
+          }
+          const scene = project?.scenes?.find(s => s.id === activeSceneId) || project?.scenes?.[0]
+          if (scene?.objects) {
+            for (const obj of scene.objects) retryObjects.push(obj)
+          }
+          const retryCode = opsToManimCode(retryObjects)
+          sendProgress('rendering', 'Re-rendering with corrected ops...')
+          renderResult = await renderManimInternal({ pythonCode: retryCode, sceneName: 'Preview' })
+        }
+      }
     }
+
+    // Determine the final Python code that was actually rendered (for both modes)
+    const finalPythonCode = mode === 'python'
+      ? reviewed.pythonCode
+      : (reviewed.manimCode || preManimCode || null)
+    const finalSceneName = mode === 'python'
+      ? reviewed.sceneName
+      : 'Preview'
 
     return {
       success: true,
@@ -856,54 +1128,144 @@ ipcMain.handle('agent-generate', async (event, payload) => {
       videoBase64: renderResult?.success ? renderResult.videoBase64 : null,
       renderError: renderResult?.success ? null : renderResult?.error,
       // Internal data (not shown to user, used when Apply is clicked)
-      _ops: mode === 'ops' ? reviewed.ops : null,
-      _pythonCode: mode === 'python' ? reviewed.pythonCode : null,
-      _sceneName: mode === 'python' ? reviewed.sceneName : null,
+      // _ops is populated for BOTH modes now (extracted from Python or from ops generation)
+      _ops: reviewed.ops || generatorResult._extractedOps || null,
+      // _pythonCode is ALWAYS populated — the exact code that rendered the preview
+      _pythonCode: finalPythonCode,
+      _sceneName: finalSceneName,
     }
   } catch (e) {
     return { success: false, error: e?.message || String(e) }
   }
 })
 
-// Render a preview from ops by building minimal Manim code
-async function renderOpsPreview({ ops, project, activeSceneId }) {
-  // Build a simple Manim scene from the ops
-  // Apply ops conceptually: collect addObject ops and build a scene
-  const objects = []
-  for (const op of (ops || [])) {
-    if (op.type === 'addObject' && op.object) {
-      objects.push(op.object)
+// ── Deterministic ops-to-Manim code generator ──────────────────
+// No LLM involved -- directly maps object properties to Manim CE Python code.
+
+function hexToManimColor(hex) {
+  if (!hex || typeof hex !== 'string') return null
+  const map = {
+    '#ffffff': 'WHITE', '#000000': 'BLACK', '#ff0000': 'RED', '#ef4444': 'RED',
+    '#00ff00': 'GREEN', '#22c55e': 'GREEN', '#4ade80': 'GREEN',
+    '#0000ff': 'BLUE', '#3b82f6': 'BLUE', '#2563eb': 'BLUE', '#1d4ed8': 'BLUE',
+    '#ffff00': 'YELLOW', '#eab308': 'YELLOW', '#fbbf24': 'YELLOW',
+    '#ff00ff': 'PURPLE', '#a855f7': 'PURPLE', '#8b5cf6': 'PURPLE',
+    '#ffa500': 'ORANGE', '#f97316': 'ORANGE',
+    '#00ffff': 'TEAL', '#06b6d4': 'TEAL', '#14b8a6': 'TEAL',
+    '#ffc0cb': 'PINK', '#ec4899': 'PINK',
+    '#808080': 'GRAY', '#6b7280': 'GRAY',
+    '#e94560': 'RED',
+  }
+  const lower = hex.toLowerCase()
+  return map[lower] || `ManimColor("${hex}")`
+}
+
+function objectToManimLine(obj, varName) {
+  if (!obj || !obj.type) return null
+  const pos = `np.array([${obj.x || 0}, ${obj.y || 0}, 0])`
+  const fillColor = obj.fill ? hexToManimColor(obj.fill) : null
+  const strokeColor = obj.stroke ? hexToManimColor(obj.stroke) : null
+  const opacity = obj.opacity !== undefined ? obj.opacity : 1
+
+  switch (obj.type) {
+    case 'circle': {
+      const r = obj.radius || 1
+      let args = [`radius=${r}`]
+      if (fillColor) args.push(`fill_color=${fillColor}`, `fill_opacity=${opacity}`)
+      if (strokeColor) args.push(`stroke_color=${strokeColor}`)
+      if (obj.strokeWidth) args.push(`stroke_width=${obj.strokeWidth}`)
+      return `${varName} = Circle(${args.join(', ')}).move_to(${pos})`
+    }
+    case 'rectangle': {
+      const w = obj.width || 2, h = obj.height || 1
+      let args = [`width=${w}`, `height=${h}`]
+      if (fillColor) args.push(`fill_color=${fillColor}`, `fill_opacity=${opacity}`)
+      if (strokeColor) args.push(`stroke_color=${strokeColor}`)
+      if (obj.strokeWidth) args.push(`stroke_width=${obj.strokeWidth}`)
+      return `${varName} = Rectangle(${args.join(', ')}).move_to(${pos})`
+    }
+    case 'triangle': {
+      let args = []
+      if (fillColor) args.push(`fill_color=${fillColor}`, `fill_opacity=${opacity}`)
+      if (strokeColor) args.push(`stroke_color=${strokeColor}`)
+      return `${varName} = Triangle(${args.join(', ')}).move_to(${pos})`
+    }
+    case 'line': {
+      const start = `np.array([${obj.x || 0}, ${obj.y || 0}, 0])`
+      const end = `np.array([${obj.x2 || 2}, ${obj.y2 || 0}, 0])`
+      let color = strokeColor || 'WHITE'
+      return `${varName} = Line(${start}, ${end}, color=${color}, stroke_width=${obj.strokeWidth || 3})`
+    }
+    case 'arrow': {
+      const start = `np.array([${obj.x || 0}, ${obj.y || 0}, 0])`
+      const end = `np.array([${obj.x2 || 2}, ${obj.y2 || 0}, 0])`
+      let color = strokeColor || 'YELLOW'
+      return `${varName} = Arrow(${start}, ${end}, color=${color}, stroke_width=${obj.strokeWidth || 3})`
+    }
+    case 'dot': {
+      let color = fillColor || 'WHITE'
+      return `${varName} = Dot(point=${pos}, color=${color}, radius=${obj.radius || 0.08})`
+    }
+    case 'text': {
+      let color = fillColor || 'WHITE'
+      const text = (obj.text || 'Text').replace(/"/g, '\\"')
+      return `${varName} = Text("${text}", color=${color}, font_size=${obj.fontSize || 48}).move_to(${pos})`
+    }
+    case 'latex': {
+      let color = fillColor || 'WHITE'
+      const tex = (obj.latex || 'x').replace(/\\/g, '\\\\')
+      return `${varName} = MathTex(r"${tex}", color=${color}).move_to(${pos})`
+    }
+    default:
+      return null
+  }
+}
+
+function opsToManimCode(objects) {
+  const lines = ['from manim import *', 'import numpy as np', '', 'class Preview(Scene):', '    def construct(self):']
+  const validObjects = objects.filter(o => o && o.type)
+
+  if (!validObjects.length) {
+    lines.push('        self.add(Text("Empty scene"))')
+    lines.push('        self.wait(1)')
+    return lines.join('\n')
+  }
+
+  for (let i = 0; i < validObjects.length; i++) {
+    const code = objectToManimLine(validObjects[i], `obj_${i}`)
+    if (code) {
+      lines.push(`        ${code}`)
     }
   }
-  // Also include existing objects from the project scene
+
+  // Play Create animations for all objects
+  const varNames = validObjects.map((_, i) => `obj_${i}`)
+    .filter((_, i) => objectToManimLine(validObjects[i], `obj_${i}`) !== null)
+  if (varNames.length) {
+    lines.push(`        self.play(${varNames.map(v => `Create(${v})`).join(', ')})`)
+  }
+  lines.push('        self.wait(1)')
+
+  return lines.join('\n')
+}
+
+function renderOpsPreview({ ops, project, activeSceneId }) {
+  // Collect objects: new ones from ops + existing ones from scene
+  const objects = []
+  for (const op of (ops || [])) {
+    if (op.type === 'addObject' && op.object) objects.push(op.object)
+  }
   const scene = project?.scenes?.find(s => s.id === activeSceneId) || project?.scenes?.[0]
   if (scene?.objects) {
     for (const obj of scene.objects) objects.push(obj)
   }
 
   if (!objects.length) {
-    return { success: false, error: 'No objects to render' }
+    return Promise.resolve({ success: false, error: 'No objects to render' })
   }
 
-  // Ask the LLM to generate a quick Manim script that renders these objects
-  const sys = `Convert this list of objects into a minimal Manim CE Python script that shows them all.
-Return ONLY JSON: {"sceneName":"Preview","pythonCode":"from manim import *\\n..."}
-Use Create/FadeIn animations. Keep it simple. No markdown.`
-
-  const content = await llmChat([
-    { role: 'system', content: sys },
-    { role: 'user', content: JSON.stringify(objects, null, 2) },
-  ])
-
-  const parsed = extractFirstJsonObject(content)
-  if (!parsed?.pythonCode) {
-    return { success: false, error: 'Failed to generate preview code from ops' }
-  }
-
-  return renderManimInternal({
-    pythonCode: parsed.pythonCode,
-    sceneName: parsed.sceneName || 'Preview',
-  })
+  const pythonCode = opsToManimCode(objects)
+  return renderManimInternal({ pythonCode, sceneName: 'Preview' })
 }
 
 // ── Library save (called after user clicks Apply) ───────────────
@@ -922,6 +1284,23 @@ ipcMain.handle('library-search', async (event, prompt) => {
     return { success: true, results: searchLibrary(prompt || '') }
   } catch (e) {
     return { success: false, results: [] }
+  }
+})
+
+ipcMain.handle('library-get-all', async () => {
+  try {
+    return { success: true, entries: getAllLibraryEntries() }
+  } catch (e) {
+    return { success: false, entries: [] }
+  }
+})
+
+ipcMain.handle('library-delete', async (event, id) => {
+  try {
+    const deleted = deleteFromLibrary(id)
+    return { success: deleted }
+  } catch (e) {
+    return { success: false, error: e?.message || String(e) }
   }
 })
 

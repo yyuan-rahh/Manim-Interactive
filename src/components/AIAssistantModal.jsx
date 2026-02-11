@@ -12,9 +12,49 @@ const PHASE_LABELS = {
   classifying: 'Analyzing prompt…',
   searching: 'Searching for examples…',
   generating: 'Generating animation…',
+  extracting: 'Extracting canvas objects…',
   reviewing: 'Reviewing quality…',
   rendering: 'Rendering preview…',
   fixing: 'Fixing render error…',
+}
+
+/** Extract a thumbnail frame from a base64 MP4 video using a hidden <video>+<canvas>. */
+function extractVideoThumbnail(videoBase64) {
+  return new Promise((resolve) => {
+    try {
+      const video = document.createElement('video')
+      video.muted = true
+      video.preload = 'auto'
+      video.src = `data:video/mp4;base64,${videoBase64}`
+
+      video.addEventListener('loadeddata', () => {
+        // Seek to 0.5s or halfway through, whichever is shorter
+        video.currentTime = Math.min(0.5, video.duration / 2)
+      })
+
+      video.addEventListener('seeked', () => {
+        try {
+          const canvas = document.createElement('canvas')
+          const scale = 200 / Math.max(video.videoWidth, 1) // ~200px wide
+          canvas.width = Math.round(video.videoWidth * scale)
+          canvas.height = Math.round(video.videoHeight * scale)
+          const ctx = canvas.getContext('2d')
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.7)
+          // Strip the data:image/jpeg;base64, prefix
+          resolve(dataUrl.split(',')[1] || '')
+        } catch {
+          resolve('')
+        }
+      })
+
+      video.addEventListener('error', () => resolve(''))
+      // Timeout safety
+      setTimeout(() => resolve(''), 5000)
+    } catch {
+      resolve('')
+    }
+  })
 }
 
 export default function AIAssistantModal({
@@ -23,6 +63,8 @@ export default function AIAssistantModal({
   project,
   activeSceneId,
   onApplyOps,
+  onApplyPythonCode,
+  prefillPrompt,
 }) {
   const [prompt, setPrompt] = useState('')
   const [status, setStatus] = useState('idle') // idle | running | done | error
@@ -64,7 +106,7 @@ export default function AIAssistantModal({
     setError('')
     setResult(null)
     setPhase('')
-    setPrompt('')
+    setPrompt(prefillPrompt || '')
     setEditPrompt('')
     setIsEditing(false)
 
@@ -83,7 +125,7 @@ export default function AIAssistantModal({
       setBaseUrlInput(s?.openaiBaseUrl || '')
       setManimPathInput(s?.manimPath || '')
     })()
-  }, [isOpen, canUseElectron])
+  }, [isOpen, canUseElectron, prefillPrompt])
 
   const openaiKeyStatus = useMemo(() => {
     if (!settings) return 'Unknown'
@@ -166,9 +208,24 @@ export default function AIAssistantModal({
 
   const handleApply = async () => {
     if (!result) return
-    if (result.mode === 'ops' && result._ops?.length) {
+
+    // Always apply ops if available (both modes now have _ops)
+    if (result._ops?.length) {
       onApplyOps?.(result._ops)
     }
+    // Always set the code panel with the exact Python code that produced the preview
+    if (result._pythonCode) {
+      onApplyPythonCode?.(result._pythonCode, result._sceneName)
+    }
+
+    // Extract video thumbnail for library
+    let videoThumbnail = ''
+    if (result.videoBase64) {
+      try {
+        videoThumbnail = await extractVideoThumbnail(result.videoBase64)
+      } catch { /* best-effort */ }
+    }
+
     // Save to library
     try {
       await window.electronAPI.libraryAdd?.({
@@ -179,6 +236,7 @@ export default function AIAssistantModal({
         sceneName: result._sceneName || '',
         mode: result.mode || 'ops',
         ops: result._ops || null,
+        videoThumbnail,
       })
     } catch { /* library save is best-effort */ }
     onClose?.()

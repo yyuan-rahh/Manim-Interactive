@@ -462,11 +462,14 @@ function searchLibrary(prompt) {
       // Bonus for entries with ops (more reusable on canvas)
       if (s.ops?.length) score += 0.5
 
+      // Bonus for components (more reusable than full animations)
+      if (s.isComponent) score += 1
+
       return { ...s, _score: score }
     })
     .filter(s => s._score > 0)
     .sort((a, b) => b._score - a._score)
-    .slice(0, 3)
+    .slice(0, 5) // Return top 5 for filtering, but AI will only use 2
 }
 
 function addToLibrary(entry) {
@@ -481,11 +484,18 @@ function addToLibrary(entry) {
     mode: entry.mode || 'python',
     ops: entry.ops || null,
     videoThumbnail: entry.videoThumbnail || '',
+    // Component metadata (new)
+    isComponent: entry.isComponent || false,
+    componentName: entry.componentName || '',
+    parentAnimationId: entry.parentAnimationId || null,
+    codeSnippet: entry.codeSnippet || '',
+    opsSubset: entry.opsSubset || null,
     createdAt: new Date().toISOString(),
   })
   // Keep library manageable
-  if (lib.snippets.length > 200) lib.snippets = lib.snippets.slice(-200)
+  if (lib.snippets.length > 50) lib.snippets = lib.snippets.slice(-50)
   writeLibrary(lib)
+  return lib.snippets[lib.snippets.length - 1].id // return the new entry's ID
 }
 
 function deleteFromLibrary(id) {
@@ -694,7 +704,7 @@ No markdown, no code fences, no explanation. Just the JSON.${libraryHint}`
   return { mode: 'ops', searchTerms: [] }
 }
 
-async function generateOps({ prompt, project, activeSceneId, libraryOps }) {
+async function generateOps({ prompt, project, activeSceneId, libraryOps, keywords = [] }) {
   sendProgress('generating', 'Generating animation...')
 
   const allowedObjectTypes = [
@@ -707,14 +717,52 @@ async function generateOps({ prompt, project, activeSceneId, libraryOps }) {
 
   let librarySection = ''
   if (libraryOps?.length) {
-    librarySection = '\n\nPREVIOUSLY SUCCESSFUL OPS FROM LIBRARY (adapt if similar to user request):\n'
-    for (const m of libraryOps.slice(0, 2)) {
-      librarySection += `\n--- "${m.prompt}" ---\n${JSON.stringify(m.ops, null, 2)}\n`
+    librarySection = '\n\nRELATED OPS FROM LIBRARY:\n'
+    // Only show 1 match, truncate to first 5 ops
+    for (const m of libraryOps.slice(0, 1)) {
+      const truncatedOps = (m.ops || []).slice(0, 5)
+      librarySection += `\n--- "${m.prompt}" ---\n${JSON.stringify(truncatedOps, null, 2)}\n`
     }
   }
 
+  // Build keyword-specific guidance
+  const keywordGuidanceMap = {
+    'visualize': [
+      '- VISUALIZE MODE: Use shapes (circle, rectangle, polygon, arc) and graphs extensively',
+      '- Add text labels to all major elements',
+      '- Use color (fill) to distinguish different parts',
+    ],
+    'intuition': [
+      '- INTUITIVE MODE: Focus on simple visual metaphors',
+      '- Use fewer latex/mathText objects, more text objects with plain language',
+      '- Animate concepts step-by-step with clear visual transitions',
+    ],
+    'prove': [
+      '- PROOF MODE: Use latex/mathText for all formal statements',
+      '- Show assumptions clearly with text objects',
+      '- Build logical steps sequentially using delay to show progression',
+    ],
+  }
+
+  const keywordInstructions = keywords
+    .filter(k => keywordGuidanceMap[k])
+    .flatMap(k => keywordGuidanceMap[k])
+
+  const keywordSection = keywordInstructions.length > 0
+    ? '\n' + keywordInstructions.join('\n') + '\n'
+    : ''
+
   const system = [
-    'You are an in-app agent for a Manim animation editor.',
+    'You are an in-app agent for a Manim animation editor and mathematics educator.',
+    '',
+    keywordSection,
+    'MATHEMATICAL DETAIL REQUIREMENTS:',
+    '- For math concepts, include ALL relevant equations as mathText objects (e.g., "a^2 + b^2 = c^2")',
+    '- Label ALL geometric elements with text objects (sides, angles, areas)',
+    '- Break complex concepts into multiple objects shown step-by-step using delay',
+    '- Use clear, descriptive names for all objects',
+    '',
+    'TECHNICAL RULES:',
     'You must output ONLY a single JSON object with keys: summary (string) and ops (array). No markdown, no code fences.',
     'Your ops must be small patches to an existing project JSON. Do NOT output Python.',
     'Prefer editing/adding objects inside the active scene.',
@@ -754,36 +802,103 @@ async function generateOps({ prompt, project, activeSceneId, libraryOps }) {
   }
 }
 
-async function generatePython({ prompt, project, activeSceneId, libraryMatches, onlineExamples }) {
+async function generatePython({ prompt, project, activeSceneId, libraryMatches, onlineExamples, keywords = [] }) {
   sendProgress('generating', 'Generating Manim Python code...')
 
   let contextSection = ''
   if (libraryMatches?.length) {
-    contextSection += '\n\nPREVIOUSLY SUCCESSFUL CODE FROM LOCAL LIBRARY:\n'
-    contextSection += 'The following code was previously generated and rendered successfully.\n'
-    contextSection += 'If it is SIMILAR to what the user wants, ADAPT it rather than writing from scratch.\n'
-    contextSection += 'Make MINIMAL changes to fulfill the new request (e.g., replace x**2 with x**2 + 3, change colors, adjust parameters).\n'
-    for (const m of libraryMatches.slice(0, 2)) {
-      contextSection += `\n--- "${m.prompt}" ---\n${m.pythonCode}\n`
+    const components = libraryMatches.filter(m => m.isComponent)
+    const fullAnimations = libraryMatches.filter(m => !m.isComponent)
+    
+    // Limit total library context to prevent token overflow
+    const maxComponents = 1
+    const maxFull = 1
+    
+    if (components.length > 0) {
+      contextSection += '\n\nREUSABLE COMPONENT FROM LIBRARY:\n'
+      contextSection += 'This component was previously generated. You can ADAPT or COMBINE it.\n'
+      for (const c of components.slice(0, maxComponents)) {
+        const code = (c.codeSnippet || c.pythonCode || '').slice(0, 1200) // max 1200 chars
+        if (code) {
+          contextSection += `\n--- "${c.componentName || c.prompt}" ---\n`
+          contextSection += `Description: ${c.description}\n`
+          contextSection += `${code}\n`
+        }
+      }
+    }
+    
+    if (fullAnimations.length > 0) {
+      contextSection += '\n\nRELATED ANIMATION FROM LIBRARY:\n'
+      contextSection += 'This complete animation is similar. ADAPT it if relevant.\n'
+      for (const m of fullAnimations.slice(0, maxFull)) {
+        const truncated = (m.pythonCode || '').slice(0, 1500) // max 1500 chars
+        contextSection += `\n--- "${m.prompt}" ---\n${truncated}\n`
+      }
     }
   }
   if (onlineExamples?.length) {
-    contextSection += '\n\nREFERENCE EXAMPLES FROM MANIM REPOSITORIES:\n'
-    for (const ex of onlineExamples.slice(0, 2)) {
-      contextSection += `\n--- ${ex.name} (${ex.path}) ---\n${ex.code.slice(0, 3000)}\n`
+    contextSection += '\n\nREFERENCE FROM MANIM REPO:\n'
+    // Only show 1 example, max 1000 chars
+    for (const ex of onlineExamples.slice(0, 1)) {
+      contextSection += `\n--- ${ex.name} ---\n${ex.code.slice(0, 1000)}\n`
     }
   }
 
+  // Build keyword-specific guidance
+  const keywordGuidanceMap = {
+    'visualize': [
+      '- VISUALIZE MODE: Use diagrams, geometric shapes, graphs, and charts extensively',
+      '- Combine visual elements with text labels and annotations',
+      '- Prioritize showing concepts through shapes and spatial relationships',
+      '- Use color coding to distinguish different parts',
+    ],
+    'intuition': [
+      '- INTUITIVE MODE: Focus on conceptual understanding over formal rigor',
+      '- Use fewer equations, more visual analogies and examples',
+      '- Explain "why" things work, not just "what" the formulas are',
+      '- Use everyday language in text annotations',
+    ],
+    'prove': [
+      '- PROOF MODE: State the theorem clearly with all assumptions',
+      '- Show each logical step with mathematical rigor',
+      '- Use MathTex for all formal statements and equations',
+      '- Build to a clear conclusion statement',
+    ],
+  }
+
+  const keywordInstructions = keywords
+    .filter(k => keywordGuidanceMap[k])
+    .flatMap(k => keywordGuidanceMap[k])
+
+  const keywordSection = keywordInstructions.length > 0
+    ? '\n' + keywordInstructions.join('\n') + '\n'
+    : ''
+
   const system = [
-    'You are an expert Manim Community Edition (CE) Python developer.',
+    'You are an expert Manim Community Edition (CE) Python developer and mathematics educator.',
     'Generate a COMPLETE, self-contained Manim CE Python script that implements the user\'s request.',
-    'Rules:',
+    '',
+    keywordSection,
+    'MATHEMATICAL DETAIL REQUIREMENTS:',
+    '- Show ALL relevant equations using MathTex (e.g., a² + b² = c²)',
+    '- Label ALL geometric elements (sides, angles, areas)',
+    '- Display numerical values when demonstrating calculations',
+    '- Break complex concepts into clear step-by-step visual sequences',
+    '- Use text annotations to explain what\'s happening at each step',
+    '- For proofs/theorems: show the logical progression visually',
+    '',
+    'TECHNICAL RULES:',
     '- Import from manim: `from manim import *`',
-    '- Define exactly ONE Scene class.',
-    '- Use only standard Manim CE APIs (Community Edition, NOT 3b1b original).',
-    '- The animation should be visually polished with appropriate colors, positioning, and timing.',
-    '- Include self.play() calls with appropriate animations (Create, FadeIn, Transform, etc.).',
-    '- Include self.wait() calls for pacing.',
+    '- Define exactly ONE Scene class',
+    '- Use only standard Manim CE APIs (Community Edition)',
+    '- Include self.play() calls with appropriate animations (Create, FadeIn, Transform, Write, etc.)',
+    '- Include self.wait() calls for pacing between steps',
+    '- Use proper colors to distinguish different elements',
+    '',
+    'ANIMATION PACING:',
+    '- Build the animation step-by-step, showing one concept at a time',
+    '- Use self.wait(0.5-1) between major steps so viewers can absorb information',
+    '- Highlight or emphasize key moments (e.g., final equation, completed proof)',
     '',
     'Output ONLY a JSON object: {"summary":"what this does","sceneName":"MyScene","pythonCode":"from manim import *\\n..."}',
     'The pythonCode must be a complete, runnable Python string. No markdown, no code fences around the JSON.',
@@ -801,12 +916,167 @@ async function generatePython({ prompt, project, activeSceneId, libraryMatches, 
   ])
 
   const parsed = extractFirstJsonObject(content)
-  if (!parsed || !parsed.pythonCode) throw new Error('Agent did not return valid Python code.')
+  if (!parsed || !parsed.pythonCode) {
+    console.error('[generatePython] Failed to parse response. Raw content:', content?.substring(0, 500))
+    console.error('[generatePython] Parsed result:', parsed)
+    throw new Error('Agent did not return valid Python code.')
+  }
   return {
     summary: parsed.summary || '',
     sceneName: parsed.sceneName || 'GeneratedScene',
     pythonCode: parsed.pythonCode,
   }
+}
+
+async function enrichAbstractPrompt(prompt, keywords = []) {
+  // For abstract/conceptual prompts, expand them into detailed animation steps
+  sendProgress('enriching', 'Breaking down concept...')
+
+  // Map keywords to guidance
+  const keywordGuidance = {
+    'visualize': 'Focus on diagrams, geometric shapes, and graphs combined with text labels. Emphasize visual depiction over abstract notation.',
+    'intuition': 'Prioritize conceptual understanding and intuitive explanations. Use fewer equations and more visual analogies. Avoid formal rigor.',
+    'prove': 'State the theorem clearly with all assumptions. Provide a step-by-step logical argument with mathematical rigor. Include a clear conclusion.',
+  }
+
+  const activeGuidance = keywords
+    .filter(k => keywordGuidance[k])
+    .map(k => `- ${k.toUpperCase()}: ${keywordGuidance[k]}`)
+    .join('\n')
+
+  const guidanceSection = activeGuidance
+    ? `\nUSER FOCUS KEYWORDS (apply these requirements to your output):\n${activeGuidance}\n`
+    : ''
+
+  const system = [
+    'You are an expert mathematics educator and animator.',
+    '',
+    'Given a user\'s animation request, determine if it\'s ABSTRACT/CONCEPTUAL or CONCRETE:',
+    '- ABSTRACT: References a proof, theorem, concept without specifics (e.g., "Euclid\'s proof", "Fourier transform", "chain rule")',
+    '- CONCRETE: Has specific details (e.g., "graph y=x^2", "draw a blue circle", "show derivative at x=2")',
+    '',
+    guidanceSection,
+    'For ABSTRACT prompts, expand into DETAILED STEP-BY-STEP visual explanation:',
+    '1. What IS this concept/proof/theorem? (brief explanation)',
+    '2. What are the KEY VISUAL ELEMENTS to show? (diagrams, equations, shapes)',
+    '3. What is the SEQUENCE of steps to animate? (first show X, then demonstrate Y, finally conclude Z)',
+    '4. What MATHEMATICAL DETAILS must be visible? (specific equations, labels, numerical values)',
+    '',
+    'EXAMPLE - Input: "Animate Euclid\'s proof of the Pythagorean theorem"',
+    'Output:',
+    '```',
+    'CONCEPT: Euclid\'s proof uses area relationships - squares on each side of a right triangle.',
+    '',
+    'VISUAL ELEMENTS:',
+    '- Right triangle with sides a, b, hypotenuse c',
+    '- Square built on side a (area a²)',
+    '- Square built on side b (area b²)',
+    '- Square built on hypotenuse c (area c²)',
+    '- Labels showing a, b, c',
+    '- Area labels: a², b², c²',
+    '',
+    'ANIMATION SEQUENCE:',
+    '1. Draw right triangle with sides a, b, c labeled',
+    '2. Construct square on side a, label area a²',
+    '3. Construct square on side b, label area b²',
+    '4. Construct square on hypotenuse c, label area c²',
+    '5. Highlight/shade the two smaller squares',
+    '6. Show they equal the large square: a² + b² = c²',
+    '7. Display final theorem equation prominently',
+    '',
+    'MATHEMATICAL DETAILS:',
+    '- All sides must be labeled with variables a, b, c',
+    '- Each square must show its area formula (a², b², c²)',
+    '- Final equation must be prominently displayed: a² + b² = c²',
+    '- Use colors to distinguish the three squares',
+    '```',
+    '',
+    'For CONCRETE prompts that already have details, return {"isAbstract":false,"enrichedPrompt":null}',
+    '',
+    'Return ONLY a JSON object: {"isAbstract":true/false,"enrichedPrompt":"detailed explanation above"}',
+    'No markdown, no code fences around the JSON.',
+  ].join('\n')
+
+  try {
+    const content = await llmChat([
+      { role: 'system', content: system },
+      { role: 'user', content: prompt },
+    ])
+    const parsed = extractFirstJsonObject(content)
+    if (parsed?.isAbstract && parsed.enrichedPrompt) {
+      console.log('[enrichAbstractPrompt] Enriched:', parsed.enrichedPrompt.substring(0, 200) + '...')
+      return parsed.enrichedPrompt
+    }
+    console.log('[enrichAbstractPrompt] Not abstract or no enrichment needed')
+  } catch (err) {
+    console.error('[enrichAbstractPrompt] Error:', err.message)
+  }
+  return null // Not abstract or enrichment failed
+}
+
+async function clarifyPrompt({ prompt, mode, enrichedPrompt, keywords = [] }) {
+  // Ask clarifying multiple-choice questions when the prompt is underspecified.
+  // Returns [] when no clarification is needed.
+  sendProgress('clarifying', 'Asking clarifying questions...')
+
+  const keywordContext = keywords.length > 0
+    ? `\nUSER KEYWORDS: ${keywords.join(', ')} (these are already specified, do not ask about them)`
+    : ''
+
+  const system = [
+    'You are a product designer for a math animation tool.',
+    'Given a user prompt, decide whether we need clarifying questions BEFORE generating any animation.',
+    '',
+    'Only ask questions when the prompt is ambiguous or underspecified.',
+    'Ask 0-3 questions maximum.',
+    keywordContext,
+    '',
+    'Each question MUST be multiple-choice. Some questions may allow multiple selections.',
+    '',
+    'Good reasons to ask:',
+    '- The user asked for a concept/proof but did not specify which example or approach (e.g., chain rule: symbolic vs numeric vs geometric).',
+    '- The user did not specify pacing/detail level (quick intuition vs step-by-step proof).',
+    '- The user did not specify visual style constraints (2D diagram vs graph-based vs geometric).',
+    '',
+    'Bad reasons to ask:',
+    '- Asking for information already provided in the prompt.',
+    '- Asking about aspects covered by the user keywords.',
+    '- Asking too many questions.',
+    '',
+    'Return ONLY JSON with this schema:',
+    '{',
+    '  "needsClarification": true/false,',
+    '  "questions": [',
+    '    {',
+    '      "id": "q1",',
+    '      "prompt": "Question text",',
+    '      "allowMultiple": true/false,',
+    '      "options": [ { "id": "a", "label": "Option label" }, ... ]',
+    '    }',
+    '  ]',
+    '}',
+    '',
+    'If no clarification is needed, return {"needsClarification":false,"questions":[]} exactly.',
+    'No markdown, no code fences.',
+  ].join('\n')
+
+  const user = [
+    'MODE:', mode || 'unknown', '',
+    'USER PROMPT:', prompt || '', '',
+    enrichedPrompt ? `ENRICHED CONTEXT:\n${String(enrichedPrompt).slice(0, 2000)}` : '',
+  ].filter(Boolean).join('\n')
+
+  try {
+    const content = await llmChat([
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ])
+    const parsed = extractFirstJsonObject(content)
+    if (parsed?.needsClarification && Array.isArray(parsed.questions) && parsed.questions.length > 0) {
+      return parsed.questions.slice(0, 3)
+    }
+  } catch { /* best-effort */ }
+  return []
 }
 
 async function extractOpsFromPython({ pythonCode, project, activeSceneId }) {
@@ -889,6 +1159,72 @@ async function extractOpsFromPython({ pythonCode, project, activeSceneId }) {
     const parsed = extractFirstJsonObject(content)
     if (parsed?.ops && Array.isArray(parsed.ops)) return parsed.ops
   } catch { /* extraction is best-effort */ }
+  return []
+}
+
+async function decomposeAnimation({ prompt, pythonCode, ops, mode }) {
+  // Decompose a complete animation into reusable conceptual components
+  // Returns an array of component objects
+
+  const system = [
+    'You are an expert at analyzing Manim animations and breaking them into reusable conceptual components.',
+    '',
+    'Given an animation (described by user prompt + Python code or ops), identify DISTINCT CONCEPTUAL PARTS that could be reused separately.',
+    '',
+    'EXAMPLES:',
+    '- "Riemann sums → Integral" animation contains:',
+    '  1. "Riemann sum visualization" (the core concept)',
+    '  2. "Limit visualization" (sum → integral transition)',
+    '',
+    '- "Derivative with tangent line" animation contains:',
+    '  1. "Tangent line on curve" (the main concept)',
+    '  2. "Slope calculation display" (numeric visualization)',
+    '',
+    'RULES:',
+    '- Each component must be a SELF-CONTAINED concept that makes sense on its own',
+    '- Return BETWEEN 2 AND 3 components. NEVER more than 3. If the animation only has one concept, return empty array.',
+    '- DO NOT create components for generic scaffolding like "axes setup", "title text", "labels", "coordinate system", or "formatting"',
+    '- DO NOT split one concept into sub-steps. Each component must be a DIFFERENT mathematical concept.',
+    '- Only extract the CORE MATHEMATICAL CONCEPTS',
+    '- For each component, provide:',
+    '  * name: short descriptive name (e.g., "Riemann Sum Rectangles")',
+    '  * description: 1-sentence explanation',
+    '  * keywords: 3-5 search keywords',
+    '  * codeSnippet: relevant COMPLETE Python code that can run on its own (from manim import * ... class ... Scene). If mode=ops, empty string.',
+    '  * opsSubset: array indices of relevant ops (e.g., [0,1,2] means first 3 ops), empty array if mode=python',
+    '',
+    'Return ONLY a JSON object:',
+    '{"components":[',
+    '  {"name":"...","description":"...","keywords":["..."],"codeSnippet":"...","opsSubset":[...]},',
+    '  ...',
+    ']}',
+    '',
+    'If the animation is too simple to decompose (e.g., just "draw a circle"), return {"components":[]} (empty array).',
+    'No markdown, no code fences.',
+  ].join('\n')
+
+  const user = [
+    'USER PROMPT:', prompt, '',
+    'MODE:', mode, '',
+  ]
+  if (mode === 'python' && pythonCode) {
+    user.push('PYTHON CODE:', pythonCode.slice(0, 3000), '') // truncate to 3000 chars
+  }
+  if (ops?.length) {
+    user.push('OPS (for reference):', JSON.stringify(ops.slice(0, 10), null, 2), '') // show first 10 ops only
+  }
+
+  try {
+    const content = await llmChat([
+      { role: 'system', content: system },
+      { role: 'user', content: user.join('\n') },
+    ])
+    const parsed = extractFirstJsonObject(content)
+    if (parsed?.components && Array.isArray(parsed.components)) {
+      // Hard cap at 3 — the LLM sometimes ignores the prompt limit
+      return parsed.components.slice(0, 3)
+    }
+  } catch { /* decomposition is best-effort */ }
   return []
 }
 
@@ -986,6 +1322,8 @@ ipcMain.handle('agent-generate', async (event, payload) => {
     const project = payload?.project
     const activeSceneId = payload?.activeSceneId
     const previousResult = payload?.previousResult || null // For "Edit" follow-ups
+    const clarificationAnswers = payload?.clarificationAnswers || null
+    const keywords = payload?.keywords || [] // User-selected focus keywords
 
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       return { success: false, error: 'Missing prompt' }
@@ -1004,10 +1342,27 @@ ipcMain.handle('agent-generate', async (event, payload) => {
     const classification = await classifyPrompt(prompt)
     const mode = classification.mode
 
+    // ── Stage 1.5: Enrich abstract prompts ──
+    const enrichedPrompt = await enrichAbstractPrompt(prompt, keywords)
+
+    // ── Stage 1.6: Clarify (multiple-choice) ──
+    // If the agent needs clarification and the user hasn't answered yet, return questions immediately.
+    if (!clarificationAnswers) {
+      const questions = await clarifyPrompt({ prompt, mode, enrichedPrompt, keywords })
+      if (questions?.length) {
+        return { success: true, needsClarification: true, questions }
+      }
+    }
+
+    const clarificationBlock = clarificationAnswers
+      ? `\n\nUSER CLARIFICATIONS (multiple-choice answers):\n${JSON.stringify(clarificationAnswers, null, 2)}\n`
+      : ''
+
     let generatorResult
 
     if (mode === 'python') {
       // ── Stage 2a: Search library + online ──
+      // Use original prompt for search, enriched for generation
       sendProgress('searching', 'Searching for examples...')
       const libraryMatches = searchLibrary(prompt)
       let onlineExamples = []
@@ -1018,12 +1373,20 @@ ipcMain.handle('agent-generate', async (event, payload) => {
       }
 
       // ── Stage 3a: Generate Python ──
-      const effectivePrompt = previousResult
-        ? `Previous result context:\n${JSON.stringify(previousResult, null, 2)}\n\nUser follow-up: ${prompt}`
-        : prompt
+      // If enriched, prepend it as context; otherwise use original prompt
+      let effectivePrompt
+      if (enrichedPrompt) {
+        effectivePrompt = previousResult
+          ? `Conceptual breakdown:\n${enrichedPrompt}\n${clarificationBlock}\nPrevious result:\n${JSON.stringify(previousResult, null, 2)}\n\nUser request: ${prompt}`
+          : `Conceptual breakdown:\n${enrichedPrompt}\n${clarificationBlock}\nUser request: ${prompt}`
+      } else {
+        effectivePrompt = previousResult
+          ? `Previous result context:\n${JSON.stringify(previousResult, null, 2)}\n${clarificationBlock}\nUser follow-up: ${prompt}`
+          : `${prompt}${clarificationBlock}`
+      }
 
       generatorResult = await generatePython({
-        prompt: effectivePrompt, project, activeSceneId, libraryMatches, onlineExamples,
+        prompt: effectivePrompt, project, activeSceneId, libraryMatches, onlineExamples, keywords,
       })
 
       // NEW: Extract canvas ops from the generated Python code
@@ -1035,11 +1398,18 @@ ipcMain.handle('agent-generate', async (event, payload) => {
       const libraryOps = searchLibrary(prompt).filter(m => m.ops?.length)
 
       // ── Stage 3b: Generate Ops ──
-      const effectivePrompt = previousResult
-        ? `Previous result context:\n${JSON.stringify(previousResult, null, 2)}\n\nUser follow-up: ${prompt}`
-        : prompt
+      let effectivePrompt
+      if (enrichedPrompt) {
+        effectivePrompt = previousResult
+          ? `Conceptual breakdown:\n${enrichedPrompt}\n${clarificationBlock}\nPrevious result:\n${JSON.stringify(previousResult, null, 2)}\n\nUser request: ${prompt}`
+          : `Conceptual breakdown:\n${enrichedPrompt}\n${clarificationBlock}\nUser request: ${prompt}`
+      } else {
+        effectivePrompt = previousResult
+          ? `Previous result context:\n${JSON.stringify(previousResult, null, 2)}\n${clarificationBlock}\nUser follow-up: ${prompt}`
+          : `${prompt}${clarificationBlock}`
+      }
 
-      generatorResult = await generateOps({ prompt: effectivePrompt, project, activeSceneId, libraryOps })
+      generatorResult = await generateOps({ prompt: effectivePrompt, project, activeSceneId, libraryOps, keywords })
     }
 
     // ── Stage 4: Review ──
@@ -1299,6 +1669,78 @@ ipcMain.handle('library-delete', async (event, id) => {
   try {
     const deleted = deleteFromLibrary(id)
     return { success: deleted }
+  } catch (e) {
+    return { success: false, error: e?.message || String(e) }
+  }
+})
+
+ipcMain.handle('library-clear', async () => {
+  try {
+    writeLibrary({ snippets: [] })
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: e?.message || String(e) }
+  }
+})
+
+ipcMain.handle('library-add-components', async (event, payload) => {
+  // Decompose an animation into components and save each to library
+  try {
+    const { prompt, pythonCode, ops, mode, videoThumbnail } = payload
+    
+    // Call decomposition LLM
+    const components = await decomposeAnimation({ prompt, pythonCode, ops, mode })
+    
+    if (!components || components.length === 0) {
+      // No decomposition possible, save as single entry (fallback to old behavior)
+      addToLibrary({
+        prompt,
+        description: payload.description || '',
+        tags: payload.tags || [],
+        pythonCode: pythonCode || '',
+        sceneName: payload.sceneName || '',
+        mode: mode || 'python',
+        ops: ops || null,
+        videoThumbnail: videoThumbnail || '',
+        isComponent: false,
+      })
+      return { success: true, componentCount: 0 }
+    }
+    
+    // Save the parent animation first
+    const parentId = addToLibrary({
+      prompt,
+      description: `Full animation: ${prompt}`,
+      tags: payload.tags || [],
+      pythonCode: pythonCode || '',
+      sceneName: payload.sceneName || '',
+      mode: mode || 'python',
+      ops: ops || null,
+      videoThumbnail: videoThumbnail || '',
+      isComponent: false,
+    })
+    
+    // Save each component
+    for (const comp of components) {
+      const compTags = [...new Set([...(payload.tags || []), ...(comp.keywords || [])])]
+      addToLibrary({
+        prompt: comp.name,
+        description: comp.description || '',
+        tags: compTags,
+        pythonCode: comp.codeSnippet || '',
+        sceneName: payload.sceneName || '',
+        mode,
+        ops: comp.opsSubset?.length ? (ops || []).filter((_, idx) => comp.opsSubset.includes(idx)) : null,
+        videoThumbnail: videoThumbnail || '', // share parent thumbnail for now
+        isComponent: true,
+        componentName: comp.name,
+        parentAnimationId: parentId,
+        codeSnippet: comp.codeSnippet || '',
+        opsSubset: comp.opsSubset || null,
+      })
+    }
+    
+    return { success: true, componentCount: components.length }
   } catch (e) {
     return { success: false, error: e?.message || String(e) }
   }

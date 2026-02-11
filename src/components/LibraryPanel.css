@@ -8,10 +8,13 @@
 .library-search {
   padding: 8px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
 .library-search-input {
-  width: 100%;
+  flex: 1;
   padding: 6px 10px;
   font-size: 12px;
   border-radius: 6px;
@@ -20,6 +23,24 @@
   color: var(--text-primary);
   outline: none;
   box-sizing: border-box;
+}
+
+.library-clear-btn {
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.30);
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.library-clear-btn:hover {
+  background: rgba(239, 68, 68, 0.25);
 }
 
 .library-search-input:focus {
@@ -60,9 +81,14 @@
   background: var(--bg-tertiary);
   border: 1px solid transparent;
   border-radius: 8px;
-  cursor: pointer;
+  cursor: grab;
   transition: all 0.15s ease;
   align-items: flex-start;
+  user-select: none;
+}
+
+.library-entry:active {
+  cursor: grabbing;
 }
 
 .library-entry:hover {
@@ -123,6 +149,16 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.library-component-badge {
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+  cursor: help;
 }
 
 .library-mode-badge {

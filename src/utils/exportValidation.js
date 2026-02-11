@@ -14,10 +14,10 @@ import { mathParser } from './mathParser'
 export function validateScene(scene) {
   const issues = []
   
-  if (!scene || !scene.objects || scene.objects.length === 0) {
-    issues.push({ level: 'warning', message: 'Scene is empty - nothing to render' })
-    return issues
-  }
+  // if (!scene || !scene.objects || scene.objects.length === 0) {
+  //   issues.push({ level: 'warning', message: 'Scene is empty - nothing to render' })
+  //   return issues
+  // }
   
   try {
   // Check for missing links in tool objects

@@ -137,6 +137,7 @@
   flex: 1;
   overflow-y: auto;
   padding: 8px 0;
+  position: relative;
 }
 
 .timeline-track {
@@ -360,4 +361,36 @@
   height: 100%;
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+/* Library drop target */
+.timeline.library-drop-target {
+  outline: 2px dashed #3b82f6;
+  outline-offset: -2px;
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.library-drop-indicator {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #3b82f6;
+  z-index: 30;
+  pointer-events: none;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
+}
+
+.library-drop-time {
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 600;
+  color: #3b82f6;
+  background: var(--bg-primary);
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
 }

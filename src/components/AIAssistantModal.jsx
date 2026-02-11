@@ -10,6 +10,8 @@ function maskKey(key) {
 
 const PHASE_LABELS = {
   classifying: 'Analyzing prompt…',
+  enriching: 'Breaking down concept…',
+  clarifying: 'Clarifying requirements…',
   searching: 'Searching for examples…',
   generating: 'Generating animation…',
   extracting: 'Extracting canvas objects…',
@@ -73,9 +75,18 @@ export default function AIAssistantModal({
   const [result, setResult] = useState(null)
   // result shape: { mode, summary, corrections, videoBase64, renderError, _ops, _pythonCode, _sceneName }
 
+  // Clarifying questions (multiple-choice)
+  const [clarifyQuestions, setClarifyQuestions] = useState([])
+  const [clarifySelections, setClarifySelections] = useState({}) // { [questionId]: Set(optionId) }
+  const [clarifyPromptBase, setClarifyPromptBase] = useState(null)
+  const [clarifyPreviousResult, setClarifyPreviousResult] = useState(null)
+
   // Edit mode: follow-up prompts
   const [editPrompt, setEditPrompt] = useState('')
   const [isEditing, setIsEditing] = useState(false)
+
+  // Keywords
+  const [selectedKeywords, setSelectedKeywords] = useState([])
 
   // Settings
   const [showSettings, setShowSettings] = useState(false)
@@ -89,6 +100,33 @@ export default function AIAssistantModal({
 
   const videoRef = useRef(null)
   const canUseElectron = !!window.electronAPI
+
+  // Keyword definitions: these guide the AI on how to interpret the prompt
+  const KEYWORD_DEFINITIONS = [
+    {
+      id: 'visualize',
+      label: 'visualize',
+      tooltip: 'Depict with diagrams, geometry, and graphs combined with text explanations',
+    },
+    {
+      id: 'intuition',
+      label: 'intuitive',
+      tooltip: 'Emphasize conceptual understanding over mathematical rigor; fewer equations, more visual explanations',
+    },
+    {
+      id: 'prove',
+      label: 'prove',
+      tooltip: 'State the theorem + assumptions + step-by-step logical argument with clear conclusion',
+    },
+  ]
+
+  const toggleKeyword = (keywordId) => {
+    setSelectedKeywords(prev => 
+      prev.includes(keywordId) 
+        ? prev.filter(k => k !== keywordId)
+        : [...prev, keywordId]
+    )
+  }
 
   // Listen for progress events
   useEffect(() => {
@@ -109,6 +147,10 @@ export default function AIAssistantModal({
     setPrompt(prefillPrompt || '')
     setEditPrompt('')
     setIsEditing(false)
+    setClarifyQuestions([])
+    setClarifySelections({})
+    setClarifyPromptBase(null)
+    setClarifyPreviousResult(null)
 
     if (!canUseElectron) return
     ;(async () => {
@@ -154,7 +196,7 @@ export default function AIAssistantModal({
     setAnthropicApiKeyInput('')
   }
 
-  const runPipeline = useCallback(async (userPrompt, previousResult = null) => {
+  const runPipeline = useCallback(async (userPrompt, previousResult = null, clarificationAnswers = null) => {
     if (!canUseElectron) {
       setError('AI assistant requires Electron.')
       setStatus('error')
@@ -168,6 +210,8 @@ export default function AIAssistantModal({
     setError('')
     setResult(null)
     setIsEditing(false)
+    setClarifyQuestions([])
+    setClarifySelections({})
 
     try {
       const res = await window.electronAPI.agentGenerate?.({
@@ -175,10 +219,24 @@ export default function AIAssistantModal({
         project,
         activeSceneId,
         previousResult,
+        clarificationAnswers,
+        keywords: selectedKeywords, // Pass selected keywords
       })
       if (!res?.success) {
         setError(res?.error || 'Pipeline failed')
         setStatus('error')
+        return
+      }
+      if (res?.needsClarification && Array.isArray(res.questions) && res.questions.length > 0) {
+        // Switch to clarification UI
+        setPhase('clarifying')
+        setStatus('idle')
+        setResult(null)
+        setError('')
+        setClarifyQuestions(res.questions)
+        setClarifySelections({})
+        setClarifyPromptBase(trimmed)
+        setClarifyPreviousResult(previousResult)
         return
       }
       setResult(res)
@@ -196,6 +254,42 @@ export default function AIAssistantModal({
     runPipeline(editPrompt, result)
   }
 
+  const toggleClarifyOption = (q, opt) => {
+    setClarifySelections(prev => {
+      const next = { ...prev }
+      const existing = next[q.id] ? new Set(next[q.id]) : new Set()
+      const has = existing.has(opt.id)
+      if (q.allowMultiple) {
+        if (has) existing.delete(opt.id)
+        else existing.add(opt.id)
+      } else {
+        existing.clear()
+        if (!has) existing.add(opt.id)
+      }
+      next[q.id] = existing
+      return next
+    })
+  }
+
+  const handleClarifyContinue = () => {
+    if (!clarifyQuestions.length || !clarifyPromptBase) return
+    const answers = clarifyQuestions.map(q => {
+      const selected = Array.from(clarifySelections[q.id] || [])
+      const selectedLabels = selected
+        .map(id => q.options?.find(o => o.id === id)?.label)
+        .filter(Boolean)
+      return {
+        questionId: q.id,
+        question: q.prompt,
+        allowMultiple: !!q.allowMultiple,
+        selectedOptionIds: selected,
+        selectedLabels,
+      }
+    }).filter(a => a.selectedOptionIds.length > 0)
+
+    runPipeline(clarifyPromptBase, clarifyPreviousResult, answers)
+  }
+
   const handleRetry = () => {
     setResult(null)
     setError('')
@@ -204,6 +298,11 @@ export default function AIAssistantModal({
     setEditPrompt('')
     setIsEditing(false)
     setPhase('')
+    setClarifyQuestions([])
+    setClarifySelections({})
+    setClarifyPromptBase(null)
+    setClarifyPreviousResult(null)
+    setSelectedKeywords([]) // Reset keywords on retry
   }
 
   const handleApply = async () => {
@@ -226,19 +325,38 @@ export default function AIAssistantModal({
       } catch { /* best-effort */ }
     }
 
-    // Save to library
+    // Save to library with component decomposition
     try {
-      await window.electronAPI.libraryAdd?.({
-        prompt,
-        description: result.summary || '',
-        tags: prompt.toLowerCase().split(/\s+/).filter(w => w.length > 2),
-        pythonCode: result._pythonCode || '',
-        sceneName: result._sceneName || '',
-        mode: result.mode || 'ops',
-        ops: result._ops || null,
-        videoThumbnail,
-      })
-    } catch { /* library save is best-effort */ }
+      if (window.electronAPI?.libraryAddComponents) {
+        const saveResult = await window.electronAPI.libraryAddComponents({
+          prompt,
+          description: result.summary || '',
+          tags: prompt.toLowerCase().split(/\s+/).filter(w => w.length > 2),
+          pythonCode: result._pythonCode || '',
+          sceneName: result._sceneName || '',
+          mode: result.mode || 'ops',
+          ops: result._ops || null,
+          videoThumbnail,
+        })
+        if (saveResult?.componentCount > 0) {
+          console.log(`Saved animation + ${saveResult.componentCount} components to library`)
+        }
+      } else {
+        // Fallback to old API if new one not available
+        await window.electronAPI.libraryAdd?.({
+          prompt,
+          description: result.summary || '',
+          tags: prompt.toLowerCase().split(/\s+/).filter(w => w.length > 2),
+          pythonCode: result._pythonCode || '',
+          sceneName: result._sceneName || '',
+          mode: result.mode || 'ops',
+          ops: result._ops || null,
+          videoThumbnail,
+        })
+      }
+    } catch (e) {
+      console.error('Library save failed:', e)
+    }
     onClose?.()
   }
 
@@ -285,6 +403,25 @@ export default function AIAssistantModal({
                   spellCheck={false}
                   disabled={status === 'running'}
                 />
+
+                {/* Keyword selector */}
+                <div className="ai-keywords">
+                  <div className="ai-keywords-label">Focus keywords (optional):</div>
+                  <div className="ai-keywords-list">
+                    {KEYWORD_DEFINITIONS.map(kw => (
+                      <button
+                        key={kw.id}
+                        className={`ai-keyword-btn ${selectedKeywords.includes(kw.id) ? 'selected' : ''}`}
+                        onClick={() => toggleKeyword(kw.id)}
+                        title={kw.tooltip}
+                        disabled={status === 'running'}
+                      >
+                        {kw.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="ai-row">
                   <button
                     className="ai-btn primary"
@@ -334,6 +471,51 @@ export default function AIAssistantModal({
                 <div className="ai-progress-spinner" />
                 <div className="ai-progress-text">
                   {PHASE_LABELS[phase] || 'Working…'}
+                </div>
+              </div>
+            )}
+
+            {/* Clarifying questions (multiple choice) */}
+            {status !== 'running' && clarifyQuestions.length > 0 && (
+              <div className="ai-section">
+                <div className="ai-section-title">A few quick questions</div>
+                <div className="ai-muted" style={{ marginBottom: 8 }}>
+                  Answering these helps the AI generate the right animation.
+                </div>
+                <div className="ai-clarify-list">
+                  {clarifyQuestions.map(q => (
+                    <div key={q.id} className="ai-clarify-question">
+                      <div className="ai-clarify-prompt">{q.prompt}</div>
+                      <div className="ai-clarify-options">
+                        {(q.options || []).map(opt => {
+                          const selected = !!clarifySelections[q.id]?.has(opt.id)
+                          return (
+                            <button
+                              key={opt.id}
+                              className={`ai-clarify-option ${selected ? 'selected' : ''}`}
+                              onClick={() => toggleClarifyOption(q, opt)}
+                              type="button"
+                            >
+                              {opt.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {q.allowMultiple && (
+                        <div className="ai-muted" style={{ marginTop: 6, fontSize: 11 }}>
+                          You can select multiple.
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="ai-row">
+                  <button className="ai-btn primary" onClick={handleClarifyContinue}>
+                    Continue
+                  </button>
+                  <button className="ai-btn" onClick={handleRetry}>
+                    Cancel
+                  </button>
                 </div>
               </div>
             )}

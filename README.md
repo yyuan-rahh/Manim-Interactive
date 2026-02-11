@@ -64,6 +64,21 @@ The app includes an **ops-based AI assistant** (click **AI** in the toolbar). It
 - **Model/Base URL**: configurable in the AI modal.
 - **Safety**: formulas embedded into generated Python are sanitized with a strict whitelist to reduce injection risk.
 
+#### Focus Keywords
+
+You can select **focus keywords** below the prompt input to guide how the AI interprets and generates your animation. These keywords help customize the style and emphasis of the generated content:
+
+- **visualize**: Emphasizes diagrams, geometric shapes, and graphs combined with text labels. Prioritizes visual depiction over abstract notation. Use this when you want the AI to "show" rather than "tell" through equations.
+
+- **intuitive**: Focuses on conceptual understanding over mathematical rigor. Uses fewer equations and more visual analogies. Avoids formal proofs and technical notation in favor of plain-language explanations. Best for building intuition about a concept.
+
+- **prove**: States theorems clearly with all assumptions, provides step-by-step logical arguments with mathematical rigor, and includes clear conclusions. Use this when you want a formal mathematical proof with proper notation and logical structure.
+
+**Example Usage:**
+- "Demonstrate the chain rule" + **intuitive** → generates a visual metaphor with simple shapes and minimal equations
+- "Demonstrate the chain rule" + **prove** → generates a formal statement with assumptions, step-by-step derivation, and conclusion
+- "Show Pythagorean theorem" + **visualize** → generates diagrams with triangles, squares, and area labels rather than just the equation
+
 ## Project Structure
 
 ```

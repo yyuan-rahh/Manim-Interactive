@@ -24,6 +24,7 @@ export default function LibraryPanel({
   onApplyOps,
   onApplyPythonCode,
   onUseAsPrompt,
+  onDropLibraryEntry,
 }) {
   const [entries, setEntries] = useState([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -67,18 +68,31 @@ export default function LibraryPanel({
     } catch { /* ignore */ }
   }
 
-  const handleLoad = (entry) => {
-    // Load onto canvas/code panel
-    if (entry.ops?.length) {
-      onApplyOps?.(entry.ops)
-    }
-    if (entry.pythonCode) {
-      onApplyPythonCode?.(entry.pythonCode, entry.sceneName)
-    }
-  }
-
   const handleUseAsPrompt = (entry) => {
     onUseAsPrompt?.(entry.prompt)
+  }
+
+  const handleClearAll = async () => {
+    if (!window.confirm('Clear entire library? This cannot be undone.')) return
+    try {
+      await window.electronAPI.libraryClear?.()
+      setEntries([])
+    } catch { /* ignore */ }
+  }
+
+  const handleDragStart = (e, entry) => {
+    // Set drag data with the full library entry
+    e.dataTransfer.setData('application/x-library-entry', JSON.stringify(entry))
+    e.dataTransfer.effectAllowed = 'copy'
+    
+    // Create a small drag preview
+    const ghost = document.createElement('div')
+    ghost.className = 'library-drag-ghost'
+    ghost.textContent = entry.prompt?.slice(0, 40) || 'Library item'
+    ghost.style.cssText = 'position:fixed;top:-9999px;left:-9999px;padding:6px 12px;background:#3b82f6;color:#fff;border-radius:6px;font-size:12px;font-weight:500;white-space:nowrap;z-index:9999;pointer-events:none;'
+    document.body.appendChild(ghost)
+    e.dataTransfer.setDragImage(ghost, 0, 0)
+    setTimeout(() => document.body.removeChild(ghost), 0)
   }
 
   if (loading) {
@@ -100,6 +114,15 @@ export default function LibraryPanel({
           onChange={(e) => setSearchQuery(e.target.value)}
           spellCheck={false}
         />
+        {entries.length > 0 && (
+          <button
+            className="library-clear-btn"
+            onClick={handleClearAll}
+            title="Clear entire library"
+          >
+            Clear All
+          </button>
+        )}
       </div>
 
       <div className="library-entries">
@@ -112,8 +135,13 @@ export default function LibraryPanel({
         )}
 
         {filtered.map(entry => (
-          <div key={entry.id} className="library-entry">
-            <div className="library-entry-thumb" onClick={() => handleLoad(entry)}>
+          <div
+            key={entry.id}
+            className="library-entry"
+            draggable
+            onDragStart={(e) => handleDragStart(e, entry)}
+          >
+            <div className="library-entry-thumb">
               {entry.videoThumbnail ? (
                 <img
                   src={`data:image/jpeg;base64,${entry.videoThumbnail}`}
@@ -126,11 +154,16 @@ export default function LibraryPanel({
                 </div>
               )}
             </div>
-            <div className="library-entry-info" onClick={() => handleLoad(entry)}>
+            <div className="library-entry-info">
               <div className="library-entry-prompt" title={entry.prompt}>
                 {entry.prompt}
               </div>
               <div className="library-entry-meta">
+                {entry.isComponent && (
+                  <span className="library-component-badge" title="Reusable component">
+                    ⚡
+                  </span>
+                )}
                 <span className={`library-mode-badge ${entry.mode || 'ops'}`}>
                   {entry.mode || 'ops'}
                 </span>

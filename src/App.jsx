@@ -22,6 +22,8 @@ function App() {
   const [currentTime, setCurrentTime] = useState(0)
   const [timelineHeight, setTimelineHeight] = useState(220)
   const [codePanelHeight, setCodePanelHeight] = useState(280)
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(220)
+  const [rightPanelWidth, setRightPanelWidth] = useState(320)
   const [generatedCode, setGeneratedCode] = useState('')
   const customCodeSyncRef = useRef(true) // tracks isCustomCodeSynced without causing re-renders
   const [customCode, setCustomCode] = useState('')
@@ -68,26 +70,43 @@ function App() {
     resizeRef.current = {
       type,
       startY: e.clientY,
+      startX: e.clientX,
       startTimelineHeight: timelineHeight,
       startCodePanelHeight: codePanelHeight,
+      startLeftSidebarWidth: leftSidebarWidth,
+      startRightPanelWidth: rightPanelWidth,
     }
 
     const onMove = (event) => {
       if (!resizeRef.current) return
-      const delta = event.clientY - resizeRef.current.startY
+      const deltaY = event.clientY - resizeRef.current.startY
+      const deltaX = event.clientX - resizeRef.current.startX
+      
       if (resizeRef.current.type === 'timeline') {
         const container = centerPanelRef.current?.getBoundingClientRect()
         const min = 140
         const max = container ? container.height - 180 : 500
         // Drag down (positive delta) = bigger timeline
-        const next = Math.max(min, Math.min(max, resizeRef.current.startTimelineHeight - delta))
+        const next = Math.max(min, Math.min(max, resizeRef.current.startTimelineHeight - deltaY))
         setTimelineHeight(next)
       } else if (resizeRef.current.type === 'code') {
         const container = rightPanelRef.current?.getBoundingClientRect()
         const min = 180
         const max = container ? container.height - 160 : 600
-        const next = Math.max(min, Math.min(max, resizeRef.current.startCodePanelHeight - delta))
+        const next = Math.max(min, Math.min(max, resizeRef.current.startCodePanelHeight - deltaY))
         setCodePanelHeight(next)
+      } else if (resizeRef.current.type === 'leftSidebar') {
+        const min = 180
+        const max = 500
+        // Drag right (positive delta) = wider sidebar
+        const next = Math.max(min, Math.min(max, resizeRef.current.startLeftSidebarWidth + deltaX))
+        setLeftSidebarWidth(next)
+      } else if (resizeRef.current.type === 'rightPanel') {
+        const min = 250
+        const max = 600
+        // Drag left (negative delta) = wider panel
+        const next = Math.max(min, Math.min(max, resizeRef.current.startRightPanelWidth - deltaX))
+        setRightPanelWidth(next)
       }
     }
 
@@ -99,7 +118,7 @@ function App() {
 
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
-  }, [timelineHeight, codePanelHeight])
+  }, [timelineHeight, codePanelHeight, leftSidebarWidth, rightPanelWidth])
 
   const isEditableTarget = (el) => {
     if (!el) return false
@@ -295,19 +314,50 @@ function App() {
   const updateObject = useCallback((objectId, updates) => {
     // Coalesce rapid drag updates into one undo step per object
     commit(`obj:update:${objectId}`, () => {
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.map(s => 
-          s.id === activeSceneId
-            ? {
-                ...s,
-                objects: s.objects.map(o =>
-                  o.id === objectId ? { ...o, ...updates } : o
-                )
-              }
-            : s
-        )
-      }))
+      setProject(prev => {
+        const updatedProject = {
+          ...prev,
+          scenes: prev.scenes.map(s => 
+            s.id === activeSceneId
+              ? {
+                  ...s,
+                  objects: s.objects.map(o =>
+                    o.id === objectId ? { ...o, ...updates } : o
+                  )
+                }
+              : s
+          )
+        }
+        
+        // Auto-expand scene duration if objects extend beyond it
+        const activeScene = updatedProject.scenes.find(s => s.id === activeSceneId)
+        if (activeScene) {
+          const maxEndTime = Math.max(
+            0,
+            ...activeScene.objects.map(obj => {
+              const delay = obj.delay || 0
+              const runTime = obj.runTime || 1
+              return delay + runTime
+            })
+          )
+          
+          // Add 1 second buffer and round up to nearest second
+          const requiredDuration = Math.ceil(maxEndTime + 1)
+          
+          if (requiredDuration > activeScene.duration) {
+            return {
+              ...updatedProject,
+              scenes: updatedProject.scenes.map(s =>
+                s.id === activeSceneId
+                  ? { ...s, duration: requiredDuration }
+                  : s
+              )
+            }
+          }
+        }
+        
+        return updatedProject
+      })
     })
   }, [activeSceneId])
 
@@ -598,7 +648,35 @@ function App() {
 
   const applyOpsFromAgent = useCallback((ops) => {
     commit('ai:apply', () => {
-      const { project: nextProject, warnings } = applyAgentOps(project, ops, { defaultSceneId: activeSceneId })
+      let { project: nextProject, warnings } = applyAgentOps(project, ops, { defaultSceneId: activeSceneId })
+      
+      // Auto-expand scene duration if AI-generated objects extend beyond it
+      const activeScene = nextProject.scenes.find(s => s.id === activeSceneId)
+      if (activeScene) {
+        const maxEndTime = Math.max(
+          0,
+          ...activeScene.objects.map(obj => {
+            const delay = obj.delay || 0
+            const runTime = obj.runTime || 1
+            return delay + runTime
+          })
+        )
+        
+        // Add 1 second buffer and round up to nearest second
+        const requiredDuration = Math.ceil(maxEndTime + 1)
+        
+        if (requiredDuration > activeScene.duration) {
+          nextProject = {
+            ...nextProject,
+            scenes: nextProject.scenes.map(s =>
+              s.id === activeSceneId
+                ? { ...s, duration: requiredDuration }
+                : s
+            )
+          }
+        }
+      }
+      
       setProject(nextProject)
       if (!nextProject.scenes.find(s => s.id === activeSceneId)) {
         setActiveSceneId(nextProject.scenes[0]?.id)
@@ -621,6 +699,91 @@ function App() {
     customCodeSyncRef.current = false // prevent useEffect from overwriting
     setRenderLogs(prev => prev + `\n[AI] Applied Python code (scene: ${sceneName || 'unknown'})\n`)
   }, [])
+
+  /**
+   * Merge new Python code into existing custom code.
+   * Extracts the construct() body from the new code and appends it to the existing construct() body.
+   */
+  const mergePythonCode = useCallback((existingCode, newCode) => {
+    if (!existingCode?.trim()) return newCode
+    if (!newCode?.trim()) return existingCode
+
+    // Extract construct body from new code (everything inside def construct(self):)
+    const constructMatch = newCode.match(/def\s+construct\s*\(\s*self\s*\)\s*:([\s\S]*?)(?=\nclass\s|\Z|$)/m)
+    if (!constructMatch) return existingCode + '\n\n# --- Merged library code ---\n' + newCode
+
+    const newBody = constructMatch[1]
+    // Find the last line of the existing construct body (before any trailing class or end-of-file)
+    const existingConstructEnd = existingCode.lastIndexOf('\n\nclass ')
+    if (existingConstructEnd > 0) {
+      return existingCode.slice(0, existingConstructEnd) + '\n\n        # --- From library ---' + newBody + existingCode.slice(existingConstructEnd)
+    }
+
+    // Just append to the end of existing code
+    return existingCode + '\n\n        # --- From library ---' + newBody
+  }, [])
+
+  /**
+   * Handle dropping a library entry onto the timeline.
+   * Applies ops with a time offset and merges Python code.
+   */
+  const handleDropLibraryEntry = useCallback((entry, dropTime) => {
+    if (!entry) return
+    
+    commit('library:drop', () => {
+      // 1) Apply ops with time offset
+      if (entry.ops?.length) {
+        // Offset all ops delays by the drop time
+        const offsetOps = entry.ops.map(op => {
+          if (op.type === 'addObject' && op.object) {
+            return {
+              ...op,
+              sceneId: op.sceneId || activeSceneId,
+              object: {
+                ...op.object,
+                id: crypto.randomUUID(), // fresh ID to avoid collisions
+                delay: (op.object.delay || 0) + dropTime,
+              }
+            }
+          }
+          return { ...op, sceneId: op.sceneId || activeSceneId }
+        })
+        
+        const { project: nextProject, warnings } = applyAgentOps(project, offsetOps, { defaultSceneId: activeSceneId })
+        
+        // Auto-expand scene duration
+        const activeScene = nextProject.scenes.find(s => s.id === activeSceneId)
+        if (activeScene) {
+          const maxEndTime = Math.max(
+            0,
+            ...activeScene.objects.map(obj => (obj.delay || 0) + (obj.runTime || 1))
+          )
+          const requiredDuration = Math.ceil(maxEndTime + 1)
+          if (requiredDuration > activeScene.duration) {
+            nextProject.scenes = nextProject.scenes.map(s =>
+              s.id === activeSceneId ? { ...s, duration: requiredDuration } : s
+            )
+          }
+        }
+        
+        setProject(nextProject)
+        
+        if (warnings?.length) {
+          setRenderLogs(prev => prev + `\nLibrary drop warnings:\n${warnings.map(w => `- ${w}`).join('\n')}\n`)
+        }
+      }
+
+      // 2) Merge Python code with existing code
+      if (entry.pythonCode) {
+        const existingCode = customCode || generatedCode || ''
+        const merged = mergePythonCode(existingCode, entry.pythonCode)
+        setCustomCode(merged)
+        setIsCustomCodeSynced(false)
+        customCodeSyncRef.current = false
+        setRenderLogs(prev => prev + `\n[Library] Merged "${entry.prompt}" at ${dropTime}s\n`)
+      }
+    })
+  }, [activeSceneId, commit, customCode, generatedCode, mergePythonCode, project])
 
   // Cmd+Z / Cmd+Shift+Z undo/redo + Delete/Backspace deletion (unless typing)
   useEffect(() => {
@@ -669,7 +832,7 @@ function App() {
       />
       
       <div className="main-content">
-        <div className="left-sidebar">
+        <div className="left-sidebar" style={{ width: leftSidebarWidth }}>
           <div className="sidebar-tabs">
             <button
               className={`sidebar-tab ${sidebarTab === 'library' ? 'active' : ''}`}
@@ -708,8 +871,31 @@ function App() {
           )}
         </div>
         
+        <div
+          className="panel-resizer vertical"
+          onMouseDown={(e) => startResize('leftSidebar', e)}
+          title="Drag to resize sidebar"
+        />
+        
         <div className="center-panel" ref={centerPanelRef}>
-          <div className="canvas-panel">
+          <div
+            className="canvas-panel"
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes('application/x-library-entry')) {
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'copy'
+              }
+            }}
+            onDrop={(e) => {
+              const data = e.dataTransfer.getData('application/x-library-entry')
+              if (!data) return
+              e.preventDefault()
+              try {
+                const entry = JSON.parse(data)
+                handleDropLibraryEntry(entry, currentTime)
+              } catch { /* ignore */ }
+            }}
+          >
             <Canvas
               scene={activeScene}
               currentTime={currentTime}
@@ -737,11 +923,18 @@ function App() {
               onAddKeyframe={addKeyframe}
               onSelectObjects={setSelectedObjectIds}
               onUpdateObject={updateObject}
+              onDropLibraryEntry={handleDropLibraryEntry}
             />
           </div>
         </div>
         
-        <div className="right-panel" ref={rightPanelRef}>
+        <div
+          className="panel-resizer vertical"
+          onMouseDown={(e) => startResize('rightPanel', e)}
+          title="Drag to resize panel"
+        />
+        
+        <div className="right-panel" style={{ width: rightPanelWidth }} ref={rightPanelRef}>
           <div className="properties-panel-wrapper">
             <PropertiesPanel
               object={selectedObject}

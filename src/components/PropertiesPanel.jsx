@@ -1143,7 +1143,7 @@ function PropertiesPanel({
         )}
         
         {/* Transform linking (timeline snap) */}
-        {object.transformFromId && (
+        {object && object.transformFromId && (
           <>
             <div className="property-section-title">Transform</div>
 

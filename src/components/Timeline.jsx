@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import './Timeline.css'
 import { getObjectDisplayName as getObjectDisplayNameHelper, getObjectTypeDisplayName } from '../utils/objectLabel'
 
-function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKeyframe, onSelectObjects, onUpdateObject }) {
+function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKeyframe, onSelectObjects, onUpdateObject, onDropLibraryEntry }) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [dragState, setDragState] = useState(null)
+  const [dropIndicator, setDropIndicator] = useState(null) // { time, x } for visual indicator
+  const timelineTracksRef = useRef(null)
   const trackRefs = useRef({})
   const rowRefs = useRef({})
   const [editingObjectId, setEditingObjectId] = useState(null)
@@ -129,12 +131,11 @@ function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKe
       newDelay = Math.max(0, Math.min(initialDelay + initialRunTime - 0.1, initialDelay + deltaTime))
       newRunTime = initialRunTime - (newDelay - initialDelay)
     } else if (dragType === 'end') {
-      // Dragging the end handle
-      newRunTime = Math.max(0.1, Math.min(duration - initialDelay, initialRunTime + deltaTime))
+      // Dragging the end handle - allow extending beyond current duration
+      newRunTime = Math.max(0.1, initialRunTime + deltaTime)
     } else if (dragType === 'move') {
-      // Dragging the entire clip
-      const maxDelay = duration - initialRunTime
-      newDelay = Math.max(0, Math.min(maxDelay, initialDelay + deltaTime))
+      // Dragging the entire clip - allow moving beyond current duration
+      newDelay = Math.max(0, initialDelay + deltaTime)
     }
 
     // Detect which row we're hovering over (vertical drag)
@@ -166,7 +167,7 @@ function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKe
         }
         if (best.targetId && best.dist <= SNAP_TIME_THRESHOLD) {
           snapTargetId = best.targetId
-          snapDelay = Math.max(0, Math.min(duration - newRunTime, best.t))
+          snapDelay = Math.max(0, best.t)
           newDelay = snapDelay
         }
       }
@@ -196,8 +197,7 @@ function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKe
       if (dragType === 'move') {
         const best = nearestTime(newDelay)
         if (best.dist <= SNAP_TIME_THRESHOLD) {
-          const maxDelay = duration - newRunTime
-          newDelay = Math.max(0, Math.min(maxDelay, best.t))
+          newDelay = Math.max(0, best.t)
         }
       } else if (dragType === 'start') {
         const best = nearestTime(newDelay)
@@ -213,8 +213,7 @@ function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKe
         const best = nearestTime(endTime)
         if (best.dist <= SNAP_TIME_THRESHOLD) {
           const minEnd = newDelay + 0.1
-          const maxEnd = duration
-          const snappedEnd = Math.max(minEnd, Math.min(maxEnd, best.t))
+          const snappedEnd = Math.max(minEnd, best.t)
           newRunTime = Math.max(0.1, snappedEnd - newDelay)
         }
       }
@@ -374,8 +373,68 @@ function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKe
     setEditingName('')
   }, [])
 
+  // Library drag-and-drop helpers
+  const getDropTimeFromEvent = useCallback((e) => {
+    const tracksEl = timelineTracksRef.current
+    if (!tracksEl) return { time: 0, x: 0 }
+    
+    const rect = tracksEl.getBoundingClientRect()
+    const trackBars = tracksEl.querySelectorAll('.track-bar')
+    if (trackBars.length > 0) {
+      const barRect = trackBars[0].getBoundingClientRect()
+      const relX = Math.max(0, e.clientX - barRect.left)
+      const fraction = relX / barRect.width
+      const time = Math.round(Math.max(0, fraction * duration) * 10) / 10
+      return { time, x: e.clientX - rect.left }
+    }
+    
+    // Fallback: use the ruler area
+    const relX = Math.max(0, e.clientX - rect.left - 80) // 80px is label width
+    const barWidth = rect.width - 80
+    const fraction = barWidth > 0 ? relX / barWidth : 0
+    const time = Math.round(Math.max(0, fraction * duration) * 10) / 10
+    return { time, x: e.clientX - rect.left }
+  }, [duration])
+
+  // Library drag-and-drop handlers
+  const handleLibraryDragOver = useCallback((e) => {
+    if (!e.dataTransfer.types.includes('application/x-library-entry')) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    
+    const { time, x } = getDropTimeFromEvent(e)
+    setDropIndicator({ time, x })
+  }, [getDropTimeFromEvent])
+
+  const handleLibraryDragLeave = useCallback((e) => {
+    // Only clear if we actually left the timeline area
+    const rect = e.currentTarget.getBoundingClientRect()
+    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+      setDropIndicator(null)
+    }
+  }, [])
+
+  const handleLibraryDrop = useCallback((e) => {
+    e.preventDefault()
+    setDropIndicator(null)
+    
+    const data = e.dataTransfer.getData('application/x-library-entry')
+    if (!data) return
+    
+    try {
+      const entry = JSON.parse(data)
+      const { time: dropTime } = getDropTimeFromEvent(e)
+      onDropLibraryEntry?.(entry, dropTime)
+    } catch { /* ignore parse errors */ }
+  }, [duration, onDropLibraryEntry])
+
   return (
-    <div className="timeline">
+    <div
+      className={`timeline ${dropIndicator ? 'library-drop-target' : ''}`}
+      onDragOver={handleLibraryDragOver}
+      onDragLeave={handleLibraryDragLeave}
+      onDrop={handleLibraryDrop}
+    >
       <div className="timeline-controls">
         <button 
           className="timeline-btn play-btn"
@@ -470,7 +529,16 @@ function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKe
         />
       </div>
       
-      <div className="timeline-tracks">
+      <div className="timeline-tracks" ref={timelineTracksRef}>
+        {/* Drop indicator line - positioned using pixel offset from left edge of tracks container */}
+        {dropIndicator && (
+          <div
+            className="library-drop-indicator"
+            style={{ left: `${dropIndicator.x}px` }}
+          >
+            <span className="library-drop-time">{dropIndicator.time.toFixed(1)}s</span>
+          </div>
+        )}
         {rows.map(row => {
           const rootObj = objectsById.get(row.rootId) || row.objects[0]
           const rowColor = rootObj ? getObjectColor(rootObj) : getClipColor(rootObj?.type)
@@ -580,7 +648,7 @@ function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKe
                 {/* Keyframe markers for selected object only (avoids clutter in grouped rows) */}
                 {selectedObject?.keyframes?.map((kf, i) => (
                   <div
-                    key={i}
+                    key={`${kf.property}-${kf.time}-${i}`}
                     className="keyframe-marker"
                     style={{ left: `${(kf.time / duration) * 100}%` }}
                     title={`${kf.property}: ${kf.value} @ ${kf.time}s`}

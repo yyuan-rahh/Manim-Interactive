@@ -784,9 +784,17 @@ async function generateOps({ prompt, project, activeSceneId, libraryOps, keyword
     librarySection,
   ].join('\n')
 
+  // Only send minimal context to avoid token overflow
+  const objectCount = scene?.objects?.length || 0
+  const minimalContext = {
+    activeSceneId,
+    sceneDuration,
+    existingObjectCount: objectCount,
+  }
+  
   const user = [
     'USER PROMPT:', prompt.trim(), '',
-    'CONTEXT (project JSON):', JSON.stringify({ activeSceneId, project }, null, 2),
+    'CONTEXT:', JSON.stringify(minimalContext, null, 2),
   ].join('\n')
 
   const content = await llmChat([
@@ -905,9 +913,16 @@ async function generatePython({ prompt, project, activeSceneId, libraryMatches, 
     contextSection,
   ].join('\n')
 
+  // Only send minimal context to avoid token overflow
+  const scene = project?.scenes?.find(s => s.id === activeSceneId) || project?.scenes?.[0]
+  const minimalContext = {
+    activeSceneId,
+    existingObjectCount: scene?.objects?.length || 0,
+  }
+  
   const user = [
     'USER PROMPT:', prompt.trim(), '',
-    'Current project context (for reference):', JSON.stringify({ activeSceneId, project }, null, 2),
+    'Current project context:', JSON.stringify(minimalContext, null, 2),
   ].join('\n')
 
   const content = await llmChat([

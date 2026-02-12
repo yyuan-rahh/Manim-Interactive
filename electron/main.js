@@ -1353,17 +1353,13 @@ ipcMain.handle('agent-generate', async (event, payload) => {
       return { success: false, error: `No API key set for ${creds.provider}. Set it in AI settings.` }
     }
 
-    // ── Stage 1: Classify ──
-    const classification = await classifyPrompt(prompt)
-    const mode = classification.mode
-
-    // ── Stage 1.5: Enrich abstract prompts ──
+    // ── Stage 1: Enrich abstract prompts ──
     const enrichedPrompt = await enrichAbstractPrompt(prompt, keywords)
 
-    // ── Stage 1.6: Clarify (multiple-choice) ──
+    // ── Stage 2: Clarify (multiple-choice) ──
     // If the agent needs clarification and the user hasn't answered yet, return questions immediately.
     if (!clarificationAnswers) {
-      const questions = await clarifyPrompt({ prompt, mode, enrichedPrompt, keywords })
+      const questions = await clarifyPrompt({ prompt, mode: null, enrichedPrompt, keywords })
       if (questions?.length) {
         return { success: true, needsClarification: true, questions }
       }
@@ -1373,10 +1369,14 @@ ipcMain.handle('agent-generate', async (event, payload) => {
       ? `\n\nUSER CLARIFICATIONS (multiple-choice answers):\n${JSON.stringify(clarificationAnswers, null, 2)}\n`
       : ''
 
+    // ── Stage 3: Classify ──
+    const classification = await classifyPrompt(prompt)
+    const mode = classification.mode
+
     let generatorResult
 
     if (mode === 'python') {
-      // ── Stage 2a: Search library + online ──
+      // ── Stage 4a: Search library + online ──
       // Use original prompt for search, enriched for generation
       sendProgress('searching', 'Searching for examples...')
       const libraryMatches = searchLibrary(prompt)
@@ -1387,7 +1387,7 @@ ipcMain.handle('agent-generate', async (event, payload) => {
         } catch { /* continue without online examples */ }
       }
 
-      // ── Stage 3a: Generate Python ──
+      // ── Stage 5a: Generate Python ──
       // If enriched, prepend it as context; otherwise use original prompt
       let effectivePrompt
       if (enrichedPrompt) {
@@ -1409,10 +1409,10 @@ ipcMain.handle('agent-generate', async (event, payload) => {
         pythonCode: generatorResult.pythonCode, project, activeSceneId,
       })
     } else {
-      // ── Stage 2b: Search library for ops matches ──
+      // ── Stage 4b: Search library for ops matches ──
       const libraryOps = searchLibrary(prompt).filter(m => m.ops?.length)
 
-      // ── Stage 3b: Generate Ops ──
+      // ── Stage 5b: Generate Ops ──
       let effectivePrompt
       if (enrichedPrompt) {
         effectivePrompt = previousResult
@@ -1427,7 +1427,7 @@ ipcMain.handle('agent-generate', async (event, payload) => {
       generatorResult = await generateOps({ prompt: effectivePrompt, project, activeSceneId, libraryOps, keywords })
     }
 
-    // ── Stage 4: Review ──
+    // ── Stage 6: Review ──
     // For ops mode, generate the Manim Python code FIRST so the reviewer can inspect it
     let preManimCode = null
     if (mode === 'ops') {
@@ -1444,7 +1444,7 @@ ipcMain.handle('agent-generate', async (event, payload) => {
 
     const reviewed = await reviewOutput({ prompt, mode, result: generatorResult, manimCode: preManimCode })
 
-    // ── Stage 5: Auto-render ──
+    // ── Stage 7: Auto-render ──
     sendProgress('rendering', 'Rendering preview...')
     let renderResult
 

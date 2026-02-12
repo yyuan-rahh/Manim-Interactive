@@ -1,7 +1,16 @@
 # AI Agent Workflow Map
 
 ## Overview
-The ManimInteractive AI Agent uses a multi-stage pipeline to transform user prompts into Manim animations. The system intelligently routes requests through different paths based on complexity, clarity, and available resources.
+The ManimInteractive AI Agent uses a 7-stage pipeline to transform user prompts into Manim animations. The system intelligently routes requests through different paths based on complexity, clarity, and available resources.
+
+**Pipeline Flow**:
+1. **Enrichment** - Expand abstract prompts into detailed animation plans
+2. **Clarification** - Ask multiple-choice questions to resolve ambiguities  
+3. **Classification** - Route to ops or Python generation mode
+4. **Resource Gathering** - Search library and online examples
+5. **Generation** - Create ops or Python code with LLM
+6. **Review** - Quality control and validation
+7. **Return** - Package video preview, ops, and code for user
 
 ---
 
@@ -16,7 +25,7 @@ The ManimInteractive AI Agent uses a multi-stage pipeline to transform user prom
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                      STAGE 0: ENRICHMENT                                │
+│                      STAGE 1: ENRICHMENT                                │
 │  Function: enrichAbstractPrompt(prompt, keywords)                       │
 │  Purpose: Expand abstract/conceptual prompts into detailed steps        │
 │                                                                          │
@@ -37,7 +46,29 @@ The ManimInteractive AI Agent uses a multi-stage pipeline to transform user prom
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                    STAGE 1: CLASSIFICATION                              │
+│                    STAGE 2: CLARIFICATION                               │
+│  Function: clarifyPrompt({ prompt, enrichedPrompt, keywords })         │
+│  Purpose: Ask user multiple-choice questions for ambiguous prompts      │
+│                                                                          │
+│  Decision Logic:                                                        │
+│  • If keywords answer the question → skip that question                 │
+│  • If enrichedPrompt has details → skip redundant questions             │
+│  • Generate 0-3 questions with 2-4 options each                         │
+│                                                                          │
+│  Examples:                                                              │
+│  • "animate parabola" → "Show equation labels? Show vertex? Color?"     │
+│  • "prove theorem" → "Focus on visual proof or algebraic steps?"        │
+│                                                                          │
+│  If needsClarification: true                                            │
+│    → Return to frontend, wait for user answers                          │
+│    → User answers questions → Continue pipeline                         │
+│                                                                          │
+│  Output: needsClarification: true/false, questions: [], answers: []     │
+└───────────────────────────┬─────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    STAGE 3: CLASSIFICATION                              │
 │  Function: classifyPrompt(prompt)                                       │
 │  Purpose: Determine output mode (ops or Python)                         │
 │                                                                          │
@@ -63,7 +94,7 @@ The ManimInteractive AI Agent uses a multi-stage pipeline to transform user prom
                 │                       │
                 ▼                       ▼
 ┌──────────────────────────┐  ┌──────────────────────────────────────────┐
-│   STAGE 2a: OPS PATH     │  │      STAGE 2b: PYTHON PATH               │
+│   STAGE 4a: OPS PATH     │  │      STAGE 4b: PYTHON PATH               │
 │                          │  │                                          │
 │  Library Search          │  │  Library Search                          │
 │  • Filter: entries with  │  │  • Get all relevant matches              │
@@ -78,34 +109,8 @@ The ManimInteractive AI Agent uses a multi-stage pipeline to transform user prom
 └────────────┬─────────────┘  └──────────────┬───────────────────────────┘
              │                               │
              ▼                               ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                   STAGE 3: CLARIFICATION                                │
-│  Function: clarifyPrompt({ prompt, mode, enrichedPrompt, keywords })   │
-│  Purpose: Ask user multiple-choice questions for ambiguous prompts      │
-│                                                                          │
-│  Decision Logic:                                                        │
-│  • If keywords answer the question → skip that question                 │
-│  • If enrichedPrompt has details → skip redundant questions             │
-│  • Generate 0-3 questions with 2-4 options each                         │
-│                                                                          │
-│  Examples:                                                              │
-│  • "animate parabola" → "Show equation labels? Show vertex? Color?"     │
-│  • "prove theorem" → "Focus on visual proof or algebraic steps?"        │
-│                                                                          │
-│  If needsClarification: true                                            │
-│    → Return to frontend, wait for user answers                          │
-│    → User answers questions → Continue pipeline                         │
-│                                                                          │
-│  Output: needsClarification: true/false, questions: [], answers: []     │
-└───────────────────────────┬─────────────────────────────────────────────┘
-                            │
-                ┌───────────┴───────────┐
-                │                       │
-          mode: "ops"            mode: "python"
-                │                       │
-                ▼                       ▼
 ┌──────────────────────────┐  ┌──────────────────────────────────────────┐
-│  STAGE 4a: GENERATE OPS  │  │    STAGE 4b: GENERATE PYTHON             │
+│  STAGE 5a: GENERATE OPS  │  │    STAGE 5b: GENERATE PYTHON             │
 │                          │  │                                          │
 │  Function: generateOps() │  │  Function: generatePython()              │
 │                          │  │                                          │
@@ -143,7 +148,8 @@ The ManimInteractive AI Agent uses a multi-stage pipeline to transform user prom
              │                               │
              │                               ▼
              │               ┌──────────────────────────────────────────┐
-             │               │  STAGE 5: RENDER PYTHON PREVIEW          │
+             │               │  (Integrated with Stage 5b)              │
+│  RENDER PYTHON PREVIEW                   │
              │               │                                          │
              │               │  • Extract scene class name              │
              │               │  • Write to temp .py file                │
@@ -153,7 +159,8 @@ The ManimInteractive AI Agent uses a multi-stage pipeline to transform user prom
              │                              │
              │                              ▼
              │               ┌──────────────────────────────────────────┐
-             │               │  STAGE 6: EXTRACT OPS FROM PYTHON        │
+             │               │  (Integrated with Stage 5b)              │
+│  EXTRACT OPS FROM PYTHON                 │
              │               │                                          │
              │               │  Function: extractOpsFromPython()        │
              │               │  Purpose: Convert Python → canvas ops    │
@@ -176,7 +183,7 @@ The ManimInteractive AI Agent uses a multi-stage pipeline to transform user prom
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                       STAGE 7: REVIEW                                   │
+│                       STAGE 6: REVIEW                                   │
 │  Function: reviewOutput({ code, mode, prompt })                         │
 │  Purpose: Quality control and correctness verification                  │
 │                                                                          │
@@ -214,7 +221,7 @@ The ManimInteractive AI Agent uses a multi-stage pipeline to transform user prom
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                    STAGE 8: RETURN TO USER                              │
+│                    STAGE 7: RETURN TO USER                              │
 │                                                                          │
 │  Package and send to frontend:                                          │
 │  • videoPreview: base64 MP4 (always)                                    │
@@ -238,7 +245,7 @@ The ManimInteractive AI Agent uses a multi-stage pipeline to transform user prom
 
 ## Stage Details
 
-### Stage 0: Enrichment
+### Stage 1: Enrichment
 **File**: `electron/main.js` → `enrichAbstractPrompt()`
 
 **Purpose**: Transform abstract prompts into concrete, detailed animation plans.
@@ -266,7 +273,27 @@ The ManimInteractive AI Agent uses a multi-stage pipeline to transform user prom
 
 ---
 
-### Stage 1: Classification
+### Stage 2: Clarification
+**File**: `electron/main.js` → `clarifyPrompt()`
+
+**Purpose**: Resolve ambiguities before generation.
+
+**Question Types**:
+- Style: "Show equation labels?"
+- Detail: "Include step-by-step derivation?"
+- Visual: "Use specific colors?"
+- Scope: "Animate entire proof or just conclusion?"
+
+**Smart Skipping**:
+- If `keywords` include `intuition` → skip "Show equations?" (answer: no)
+- If `keywords` include `prove` → skip "Show all steps?" (answer: yes)
+- If `enrichedPrompt` has details → skip redundant questions
+
+**UI Format**: Multiple-choice questions, user can select options
+
+---
+
+### Stage 3: Classification
 **File**: `electron/main.js` → `classifyPrompt()`
 
 **Purpose**: Route to appropriate generation pipeline.
@@ -290,7 +317,7 @@ Is there a strong library match (score ≥ 3)?
 
 ---
 
-### Stage 2: Resource Gathering
+### Stage 4: Resource Gathering
 **OPS PATH**: Search library for ops-compatible entries
 **PYTHON PATH**: Search library + online Manim repositories
 
@@ -306,27 +333,7 @@ Is there a strong library match (score ≥ 3)?
 
 ---
 
-### Stage 3: Clarification
-**File**: `electron/main.js` → `clarifyPrompt()`
-
-**Purpose**: Resolve ambiguities before generation.
-
-**Question Types**:
-- Style: "Show equation labels?"
-- Detail: "Include step-by-step derivation?"
-- Visual: "Use specific colors?"
-- Scope: "Animate entire proof or just conclusion?"
-
-**Smart Skipping**:
-- If `keywords` include `intuition` → skip "Show equations?" (answer: no)
-- If `keywords` include `prove` → skip "Show all steps?" (answer: yes)
-- If `enrichedPrompt` has details → skip redundant questions
-
-**UI Format**: Multiple-choice questions, user can select options
-
----
-
-### Stage 4a: Generate Ops
+### Stage 5a: Generate Ops
 **File**: `electron/main.js` → `generateOps()`
 
 **System Prompt Structure**:
@@ -367,7 +374,7 @@ Is there a strong library match (score ≥ 3)?
 
 ---
 
-### Stage 4b: Generate Python
+### Stage 5b: Generate Python
 **File**: `electron/main.js` → `generatePython()`
 
 **System Prompt Structure**:
@@ -403,7 +410,7 @@ Is there a strong library match (score ≥ 3)?
 
 ---
 
-### Stage 5: Render Python Preview
+### (Integrated with Stage 5b): Render Python Preview
 **File**: `electron/main.js` → `renderManimPreview()`
 
 **Process**:
@@ -421,7 +428,7 @@ Is there a strong library match (score ≥ 3)?
 
 ---
 
-### Stage 6: Extract Ops from Python
+### (Integrated with Stage 5b): Extract Ops from Python
 **File**: `electron/main.js` → `extractOpsFromPython()`
 
 **Purpose**: Convert Python code → canvas-renderable operations
@@ -446,7 +453,7 @@ Is there a strong library match (score ≥ 3)?
 
 ---
 
-### Stage 7: Review
+### Stage 6: Review
 **File**: `electron/main.js` → `reviewOutput()`
 
 **Review Process**:
@@ -478,7 +485,7 @@ circle = Circle(color=BLUE)  # Missing fill_opacity
 
 ---
 
-### Stage 8: Package and Return
+### Stage 7: Package and Return
 **File**: `electron/main.js` → `ipcMain.handle('agent-generate')`
 
 **Return Payload**:

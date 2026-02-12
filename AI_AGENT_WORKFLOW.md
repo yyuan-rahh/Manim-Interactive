@@ -1,16 +1,26 @@
 # AI Agent Workflow Map
 
 ## Overview
-The ManimInteractive AI Agent uses a 7-stage pipeline to transform user prompts into Manim animations. The system intelligently routes requests through different paths based on complexity, clarity, and available resources.
+The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transform user prompts into Manim animations. The system checks the library first and takes the cheapest possible path: direct reuse, lightweight adaptation, component assembly, or full generation.
 
-**Pipeline Flow**:
-1. **Enrichment** - Expand abstract prompts into detailed animation plans
-2. **Clarification** - Ask multiple-choice questions to resolve ambiguities  
+**Tiered Pipeline Flow**:
+0. **Quick Library Check** - If near-exact match exists, skip to render (Tier 1: 0 tokens, ~10s)
+1. **Clarification** - Ask multiple-choice questions to resolve ambiguities
+2. **Enrichment** - Expand abstract prompts into detailed animation plans (uses clarifications as context)
 3. **Classification** - Route to ops or Python generation mode
 4. **Resource Gathering** - Search library and online examples
-5. **Generation** - Create ops or Python code with LLM
+4.5. **Library Assembly** - Determine tier: adapt (Tier 2), assemble (Tier 3), or full (Tier 4)
+5. **Generation** - Tier-dependent: adapt existing code, assemble components, or full generation
 6. **Review** - Quality control and validation
 7. **Return** - Package video preview, ops, and code for user
+
+**Tier Summary**:
+| Tier | When | LLM Calls | Tokens | Est. Time |
+|------|------|-----------|--------|-----------|
+| 1 - Direct Reuse | Same/near-identical prompt (coverage >= 0.85) | 0 | 0 | ~10s (render only) |
+| 2 - Adapt | Similar prompt, one strong match (coverage >= 0.5) | 1 (light) + review | ~3K | ~25s |
+| 3 - Assemble | Multiple components cover request (combined >= 0.5) | 1 (light) + review | ~4K | ~35s |
+| 4 - Full Generation | No library coverage | 3-5 (full pipeline) | ~10-15K | ~70s |
 
 ---
 
@@ -25,7 +35,29 @@ The ManimInteractive AI Agent uses a 7-stage pipeline to transform user prompts 
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                      STAGE 1: ENRICHMENT                                │
+│                STAGE 0: QUICK LIBRARY CHECK                             │
+│  Function: searchLibrary(prompt) — Jaccard + coverage scoring           │
+│                                                                          │
+│  If best match has coverage >= 0.85 and has pythonCode:                 │
+│  → TIER 1: DIRECT REUSE — skip all LLM calls, jump to render           │
+│  → 0 tokens, ~10s                                                       │
+│                                                                          │
+│  Otherwise: continue to full pipeline                                   │
+└───────────────────────────┬─────────────────────────────────────────────┘
+                            │
+              ┌─────────────┴──────────────┐
+              │                            │
+        coverage >= 0.85            coverage < 0.85
+              │                            │
+              ▼                            ▼
+     ┌────────────────┐     ┌─────────────────────────────────┐
+     │  DIRECT REUSE  │     │  Continue to full pipeline...   │
+     │  (Tier 1)      │     └──────────────┬──────────────────┘
+     │  Skip to       │                    │
+     │  RENDER ──────►│──► Stage 7         ▼
+     └────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      STAGE 1: CLARIFICATION                             │
 │  Function: enrichAbstractPrompt(prompt, keywords)                       │
 │  Purpose: Expand abstract/conceptual prompts into detailed steps        │
 │                                                                          │
@@ -46,7 +78,7 @@ The ManimInteractive AI Agent uses a 7-stage pipeline to transform user prompts 
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                    STAGE 2: CLARIFICATION                               │
+│                      STAGE 2: ENRICHMENT                                │
 │  Function: clarifyPrompt({ prompt, enrichedPrompt, keywords })         │
 │  Purpose: Ask user multiple-choice questions for ambiguous prompts      │
 │                                                                          │
@@ -96,16 +128,17 @@ The ManimInteractive AI Agent uses a 7-stage pipeline to transform user prompts 
 ┌──────────────────────────┐  ┌──────────────────────────────────────────┐
 │   STAGE 4a: OPS PATH     │  │      STAGE 4b: PYTHON PATH               │
 │                          │  │                                          │
-│  Library Search          │  │  Library Search                          │
+│  Library Search          │  │  Library Search (Jaccard + coverage)     │
 │  • Filter: entries with  │  │  • Get all relevant matches              │
-│    ops array             │  │  • Separate: components vs full anims    │
-│  • Return: top matches   │  │  • Limit: 1 component + 1 full anim      │
+│    ops array             │  │  • Compute coverage per entry            │
+│  • Return: top matches   │  │                                          │
+│                          │  │  Library Assembly (Stage 4.5):           │
+│                          │  │  • coverage >= 0.5 (single) → Tier 2    │
+│                          │  │  • combined >= 0.5 (multi)  → Tier 3    │
+│                          │  │  • otherwise                → Tier 4    │
 │                          │  │                                          │
-│                          │  │  Online Search                           │
-│                          │  │  • If searchTerms provided, query:       │
-│                          │  │    - "manim community {term} example"    │
-│                          │  │  • Parse code snippets from results      │
-│                          │  │  • Limit: 1 example, max 1000 chars      │
+│                          │  │  Online Search (Tier 4 only)             │
+│                          │  │  • "manim community {term} example"      │
 └────────────┬─────────────┘  └──────────────┬───────────────────────────┘
              │                               │
              ▼                               ▼
@@ -245,14 +278,52 @@ The ManimInteractive AI Agent uses a 7-stage pipeline to transform user prompts 
 
 ## Stage Details
 
-### Stage 1: Enrichment
+### Stage 0: Quick Library Check
+**File**: `electron/main.js` → `searchLibrary()` + pipeline handler
+
+**Purpose**: Before any LLM calls, check if the library already has a near-exact match for the prompt. If so, skip the entire generation pipeline and just render.
+
+**Search Algorithm (Jaccard + Coverage)**:
+- Extract keywords from prompt (lowercase, strip punctuation, filter stopwords)
+- For each library entry, compute:
+  - **Jaccard similarity**: `|intersection| / |union|` of keyword sets
+  - **Coverage**: `|intersection| / |promptKeywords|` (fraction of prompt covered)
+  - Combined score: `jaccard * 3 + coverage * 5 + formula_bonus + component_bonus`
+
+**Tier 1 Decision**: If `coverage >= 0.85` and entry has `pythonCode` → **Direct Reuse**
+- Skip: Enrichment, Clarification, Classification, Generation, Review
+- Only run: Render (manim execution) + ops extraction
+- Result: **0 LLM tokens, ~10 seconds**
+
+---
+
+### Stage 1: Clarification
+**File**: `electron/main.js` → `clarifyPrompt()`
+
+**Purpose**: Resolve ambiguities before doing deeper work (classification/generation). If needed, ask 0–3 multiple-choice questions and wait for the user’s answers.
+
+**Question Types**:
+- Style: "Show equation labels?"
+- Detail: "Include step-by-step derivation?"
+- Visual: "Use specific colors?"
+- Scope: "Animate entire proof or just conclusion?"
+
+**Smart Skipping**:
+- If `keywords` already specify the intent (e.g., `prove`, `intuition`) → avoid redundant questions
+- Avoid asking for details already present in the prompt
+
+**UI Format**: Multiple-choice questions, user can select options
+
+---
+
+### Stage 2: Enrichment
 **File**: `electron/main.js` → `enrichAbstractPrompt()`
 
-**Purpose**: Transform abstract prompts into concrete, detailed animation plans.
+**Purpose**: Transform abstract prompts into a concrete, detailed animation plan. This stage **uses clarification answers as extra context**.
 
 **Examples**:
 - Input: `"Euclid's proof of Pythagorean theorem"`
-- Output: 
+- Output:
   ```
   CONCEPT: Euclid's proof uses area relationships...
   VISUAL ELEMENTS:
@@ -273,26 +344,6 @@ The ManimInteractive AI Agent uses a 7-stage pipeline to transform user prompts 
 
 ---
 
-### Stage 2: Clarification
-**File**: `electron/main.js` → `clarifyPrompt()`
-
-**Purpose**: Resolve ambiguities before generation.
-
-**Question Types**:
-- Style: "Show equation labels?"
-- Detail: "Include step-by-step derivation?"
-- Visual: "Use specific colors?"
-- Scope: "Animate entire proof or just conclusion?"
-
-**Smart Skipping**:
-- If `keywords` include `intuition` → skip "Show equations?" (answer: no)
-- If `keywords` include `prove` → skip "Show all steps?" (answer: yes)
-- If `enrichedPrompt` has details → skip redundant questions
-
-**UI Format**: Multiple-choice questions, user can select options
-
----
-
 ### Stage 3: Classification
 **File**: `electron/main.js` → `classifyPrompt()`
 
@@ -300,7 +351,7 @@ The ManimInteractive AI Agent uses a 7-stage pipeline to transform user prompts 
 
 **Decision Tree**:
 ```
-Is there a strong library match (score ≥ 3)?
+Is there a strong library match (coverage >= 0.4)?
   YES → Prefer library entry's mode
   NO  → Analyze prompt complexity
     Simple (single object) → ops
@@ -308,12 +359,12 @@ Is there a strong library match (score ≥ 3)?
     Requires custom code → python
 ```
 
-**Library Scoring**:
-- Base: keyword overlap count
-- +Bonus: semantic similarity (0-2 points)
-- +Bonus: formula match (0-2 points)
-- +0.5 if entry has ops
-- +0.3 if entry is component
+**Library Scoring** (Jaccard + coverage):
+- Jaccard similarity * 3 (0-3 points)
+- Coverage * 5 (0-5 points)
+- +2 per formula match
+- +0.3 if entry has ops
+- +0.5 if entry is component
 
 ---
 
@@ -321,7 +372,7 @@ Is there a strong library match (score ≥ 3)?
 **OPS PATH**: Search library for ops-compatible entries
 **PYTHON PATH**: Search library + online Manim repositories
 
-**Online Search Query Format**:
+**Online Search Query Format** (Tier 4 only):
 ```
 "manim community {searchTerm} example site:github.com"
 ```
@@ -330,6 +381,41 @@ Is there a strong library match (score ≥ 3)?
 - Library components: 1 entry, max 1200 chars
 - Library animations: 1 entry, max 1500 chars
 - Online examples: 1 entry, max 1000 chars
+
+---
+
+### Stage 4.5: Library Assembly (Python mode only)
+**File**: `electron/main.js` → `assembleFromLibrary()`
+
+**Purpose**: Determine how much of the request can be fulfilled from existing library code.
+
+**Tier Decision Logic**:
+```
+Best match coverage >= 0.5 and has pythonCode?
+  YES → Tier 2 (Adapt)
+         Use generateFromAssembly() with existing code
+         "Adapt this code for: [prompt]"
+
+Multiple components each >= 0.15 coverage, combined >= 0.5?
+  YES → Tier 3 (Assemble)
+         Merge construct() bodies from up to 4 components
+         Use generateFromAssembly() to integrate + fill gaps
+         "Combine these components for: [prompt]"
+
+Otherwise → Tier 4 (Full Generation)
+         Standard generatePython() pipeline
+```
+
+**Component Merging** (`mergeComponentCode`):
+- Extracts `construct()` method body from each component's code
+- Concatenates bodies with section comments
+- Wraps in a single `AssembledScene` class
+
+**Lightweight LLM Call** (`generateFromAssembly`):
+- System prompt: ~500 tokens (vs ~2000 for full generation)
+- Tier 2: "Here is existing code. Adapt with MINIMAL changes."
+- Tier 3: "Here are code components. Combine into one Scene."
+- Same output format as `generatePython()`: `{summary, sceneName, pythonCode}`
 
 ---
 
@@ -374,8 +460,8 @@ Is there a strong library match (score ≥ 3)?
 
 ---
 
-### Stage 5b: Generate Python
-**File**: `electron/main.js` → `generatePython()`
+### Stage 5b: Generate Python (Tier-Dependent)
+**File**: `electron/main.js` → `generateFromAssembly()` (Tier 2-3) or `generatePython()` (Tier 4)
 
 **System Prompt Structure**:
 ```
@@ -702,12 +788,25 @@ existingCode += "\n\n# From library\n" + newConstructBody
 
 ## Performance Optimizations
 
+### Tiered Library Reuse
+- **Tier 1 (Direct Reuse)**: 0 LLM tokens, ~10s — exact/near-exact match from library
+- **Tier 2 (Adapt)**: ~3K tokens, ~25s — lightweight "adapt this code" LLM call
+- **Tier 3 (Assemble)**: ~4K tokens, ~35s — merge components + fill gaps
+- **Tier 4 (Full Generation)**: ~10-15K tokens, ~70s — standard pipeline
+- **As the library grows, more prompts hit Tier 1-3 automatically**
+
+### Library Search Algorithm
+- **Jaccard similarity**: Normalized 0-1 score based on keyword set overlap
+- **Coverage metric**: Fraction of prompt keywords found in each library entry
+- **Stopword filtering**: Removes 60+ common words for better signal
+- **Formula matching**: Detects mathematical expression overlap
+
 ### Token Management
 - **Before**: Sent entire project (potentially 200K+ tokens)
 - **After**: Send only minimal context (~100 tokens)
 - **Result**: 99.5% reduction in context size
 
-### Library Context
+### Library Context (Tier 4 only)
 - Max 1 component (1200 chars)
 - Max 1 full animation (1500 chars)
 - Max 1 online example (1000 chars)
@@ -716,7 +815,7 @@ existingCode += "\n\n# From library\n" + newConstructBody
 ### Caching
 - Library loaded once at startup
 - Searched locally (no network calls for ops mode)
-- Online search only when searchTerms provided
+- Online search only when searchTerms provided (Tier 4 only)
 
 ---
 

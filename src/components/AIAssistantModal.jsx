@@ -9,10 +9,13 @@ function maskKey(key) {
 }
 
 const PHASE_LABELS = {
+  reusing: 'Found match in library, reusing…',
+  adapting: 'Adapting similar animation from library…',
+  assembling: 'Assembling from library components…',
   classifying: 'Analyzing prompt…',
   enriching: 'Breaking down concept…',
   clarifying: 'Clarifying requirements…',
-  searching: 'Searching for examples…',
+  searching: 'Searching library and examples…',
   generating: 'Generating animation…',
   extracting: 'Extracting canvas objects…',
   reviewing: 'Reviewing quality…',

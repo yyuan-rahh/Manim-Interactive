@@ -398,8 +398,8 @@ function getAICredentials() {
       || (settings.anthropicApiKey && String(settings.anthropicApiKey).trim())
     return { provider, apiKey, model: settings.anthropicModel || 'claude-sonnet-4-5' }
   }
-  const apiKey = (process.env.OPENAI_API_KEY && String(process.env.OPENAI_API_KEY).trim())
-    || (settings.openaiApiKey && String(settings.openaiApiKey).trim())
+    const apiKey = (process.env.OPENAI_API_KEY && String(process.env.OPENAI_API_KEY).trim())
+      || (settings.openaiApiKey && String(settings.openaiApiKey).trim())
   return {
     provider, apiKey,
     model: settings.openaiModel || 'gpt-4o-mini',
@@ -438,38 +438,75 @@ function writeLibrary(lib) {
   try { fs.writeFileSync(getLibraryPath(), JSON.stringify(lib, null, 2)) } catch { /* noop */ }
 }
 
+// ── Library search with Jaccard similarity + coverage scoring ──
+
+const SEARCH_STOPWORDS = new Set([
+  'the', 'and', 'how', 'for', 'with', 'into', 'that', 'this', 'from',
+  'are', 'was', 'were', 'been', 'has', 'have', 'had', 'does', 'did',
+  'will', 'would', 'could', 'should', 'may', 'might', 'can', 'shall',
+  'animate', 'animation', 'show', 'create', 'make', 'get', 'set',
+  'using', 'use', 'like', 'also', 'about', 'just', 'more', 'when',
+  'what', 'which', 'where', 'who', 'whom', 'why', 'not', 'all',
+  'each', 'every', 'both', 'few', 'some', 'any', 'most', 'other',
+  'than', 'then', 'very', 'its', 'let', 'say', 'see', 'way',
+  'want', 'need', 'try', 'please', 'add', 'put', 'give',
+])
+
+function extractKeywords(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !SEARCH_STOPWORDS.has(w))
+}
+
 function searchLibrary(prompt) {
   const lib = readLibrary()
   if (!lib.snippets?.length) return []
-  const words = prompt.toLowerCase().split(/\s+/).filter(w => w.length > 2)
+
+  const promptKeywords = extractKeywords(prompt)
+  const promptSet = new Set(promptKeywords)
+  if (promptSet.size === 0) return []
 
   // Extract math expressions from prompt (e.g. "x^2+3", "sin(x)")
   const mathExprs = (prompt.match(/[a-z0-9^+\-*/()]+/gi) || [])
-    .filter(e => /[a-z].*[\d^]|[\d].*[a-z]/i.test(e)) // must mix letters and digits/operators
+    .filter(e => /[a-z].*[\d^]|[\d].*[a-z]/i.test(e))
 
   return lib.snippets
     .map(s => {
-      const haystack = `${s.prompt} ${s.description} ${(s.tags || []).join(' ')}`.toLowerCase()
-      // Word match score
-      let score = words.reduce((acc, w) => acc + (haystack.includes(w) ? 1 : 0), 0)
+      const entryText = `${s.prompt} ${s.description} ${(s.tags || []).join(' ')} ${s.componentName || ''}`
+      const entryKeywords = extractKeywords(entryText)
+      const entrySet = new Set(entryKeywords)
 
-      // Formula similarity bonus: if both have math-like expressions sharing a base
+      // Jaccard similarity: |intersection| / |union|
+      const intersection = [...promptSet].filter(w => entrySet.has(w))
+      const union = new Set([...promptSet, ...entrySet])
+      const jaccard = union.size > 0 ? intersection.length / union.size : 0
+
+      // Coverage: what fraction of the user's prompt keywords appear in the entry
+      const coverage = promptSet.size > 0 ? intersection.length / promptSet.size : 0
+
+      // Combined score: weighted blend
+      let score = (jaccard * 3) + (coverage * 5)
+
+      // Formula similarity bonus
+      const haystack = entryText.toLowerCase()
       for (const expr of mathExprs) {
-        const base = expr.replace(/[+\-]\s*\d+$/, '').toLowerCase() // strip trailing constant
+        const base = expr.replace(/[+\-]\s*\d+$/, '').toLowerCase()
         if (base.length > 1 && haystack.includes(base)) score += 2
       }
 
       // Bonus for entries with ops (more reusable on canvas)
-      if (s.ops?.length) score += 0.5
+      if (s.ops?.length) score += 0.3
 
-      // Bonus for components (more reusable than full animations)
-      if (s.isComponent) score += 1
+      // Bonus for components (more reusable building blocks)
+      if (s.isComponent) score += 0.5
 
-      return { ...s, _score: score }
+      return { ...s, _score: score, _jaccard: jaccard, _coverage: coverage }
     })
     .filter(s => s._score > 0)
     .sort((a, b) => b._score - a._score)
-    .slice(0, 5) // Return top 5 for filtering, but AI will only use 2
+    .slice(0, 10)
 }
 
 function addToLibrary(entry) {
@@ -513,6 +550,142 @@ function deleteFromLibrary(id) {
 function getAllLibraryEntries() {
   const lib = readLibrary()
   return lib.snippets || []
+}
+
+// ── Library Assembly (tiered reuse) ─────────────────────────────
+
+function computeCombinedCoverage(prompt, entries) {
+  const promptSet = new Set(extractKeywords(prompt))
+  if (promptSet.size === 0) return 0
+  const coveredWords = new Set()
+  for (const entry of entries) {
+    const entryText = `${entry.prompt} ${entry.description} ${(entry.tags || []).join(' ')} ${entry.componentName || ''}`
+    const entrySet = new Set(extractKeywords(entryText))
+    for (const w of promptSet) {
+      if (entrySet.has(w)) coveredWords.add(w)
+    }
+  }
+  return coveredWords.size / promptSet.size
+}
+
+function mergeComponentCode(components) {
+  // Extract construct() bodies from each component and merge into one Scene
+  const bodies = []
+  for (const comp of components) {
+    const code = comp.codeSnippet || comp.pythonCode || ''
+    if (!code) continue
+    // Try to extract the construct() body
+    const match = code.match(/def\s+construct\s*\(\s*self\s*\)\s*:\s*\n([\s\S]+?)(?=\nclass\s|\n\S|\s*$)/)
+    if (match) {
+      bodies.push(`        # --- ${comp.componentName || comp.prompt} ---\n${match[1]}`)
+    } else {
+      // Fallback: include the whole code as a comment reference
+      bodies.push(`        # --- ${comp.componentName || comp.prompt} ---\n        # (full code reference)\n`)
+    }
+  }
+  if (bodies.length === 0) return null
+  return `from manim import *\n\nclass AssembledScene(Scene):\n    def construct(self):\n${bodies.join('\n\n')}`
+}
+
+function assembleFromLibrary({ prompt, libraryMatches }) {
+  if (!libraryMatches?.length) return { tier: 'full', baseCode: null, components: [] }
+
+  // Tier 2: Single strong match — adapt it
+  const best = libraryMatches[0]
+  if (best._coverage >= 0.5 && best.pythonCode) {
+    console.log(`[assembleFromLibrary] Tier 2 (adapt): best match "${best.prompt}" coverage=${best._coverage.toFixed(2)}`)
+    return {
+      tier: 'adapt',
+      baseCode: best.pythonCode,
+      baseEntry: best,
+      components: [best],
+    }
+  }
+
+  // Tier 3: Multiple components collectively cover the prompt
+  const relevantComponents = libraryMatches.filter(m => m._coverage >= 0.15 && (m.codeSnippet || m.pythonCode))
+  if (relevantComponents.length >= 2) {
+    const combinedCoverage = computeCombinedCoverage(prompt, relevantComponents)
+    if (combinedCoverage >= 0.5) {
+      const merged = mergeComponentCode(relevantComponents.slice(0, 4)) // max 4 components
+      if (merged) {
+        console.log(`[assembleFromLibrary] Tier 3 (assemble): ${relevantComponents.length} components, combinedCoverage=${combinedCoverage.toFixed(2)}`)
+        return {
+          tier: 'assemble',
+          baseCode: merged,
+          components: relevantComponents.slice(0, 4),
+        }
+      }
+    }
+  }
+
+  // Tier 4: Fall back to full generation
+  console.log('[assembleFromLibrary] Tier 4 (full): no sufficient library coverage')
+  return { tier: 'full', baseCode: null, components: [] }
+}
+
+async function generateFromAssembly({ tier, baseCode, prompt, keywords = [] }) {
+  // Lightweight LLM call for Tier 2 (adapt) and Tier 3 (assemble)
+
+  const keywordHints = keywords.length > 0
+    ? `\nFocus keywords: ${keywords.join(', ')}.`
+    : ''
+
+  let system, user
+
+  if (tier === 'adapt') {
+    sendProgress('adapting', 'Adapting similar animation from library...')
+    system = [
+      'You are an expert Manim CE Python developer.',
+      'You are given EXISTING working Manim code and a user request.',
+      'Your job is to ADAPT the existing code with MINIMAL changes to match the new request.',
+      'Do NOT rewrite from scratch. Modify only what is necessary.',
+      keywordHints,
+      '',
+      'Output ONLY a JSON object: {"summary":"what changed","sceneName":"MyScene","pythonCode":"from manim import *\\n..."}',
+      'No markdown, no code fences around the JSON.',
+    ].join('\n')
+
+    user = [
+      'EXISTING CODE (adapt this):\n', baseCode, '',
+      '\nUSER REQUEST:', prompt.trim(),
+    ].join('\n')
+  } else {
+    // tier === 'assemble'
+    sendProgress('assembling', 'Assembling from library components...')
+    system = [
+      'You are an expert Manim CE Python developer.',
+      'You are given MULTIPLE code components from a library.',
+      'Your job is to COMBINE them into ONE complete Scene class that fulfills the user request.',
+      'Reuse the component code as much as possible. Fill any gaps or add transitions between parts.',
+      'Ensure the final code is a complete, runnable Manim CE script.',
+      keywordHints,
+      '',
+      'Output ONLY a JSON object: {"summary":"what this does","sceneName":"MyScene","pythonCode":"from manim import *\\n..."}',
+      'No markdown, no code fences around the JSON.',
+    ].join('\n')
+
+    user = [
+      'LIBRARY COMPONENTS (combine these):\n', baseCode, '',
+      '\nUSER REQUEST:', prompt.trim(),
+    ].join('\n')
+  }
+
+  const content = await llmChat([
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ])
+
+  const parsed = extractFirstJsonObject(content)
+  if (!parsed || !parsed.pythonCode) {
+    console.error(`[generateFromAssembly] Failed to parse ${tier} response`)
+    throw new Error('Assembly generation failed.')
+  }
+  return {
+    summary: parsed.summary || '',
+    sceneName: parsed.sceneName || 'AssembledScene',
+    pythonCode: parsed.pythonCode,
+  }
 }
 
 // ── GitHub Manim search ─────────────────────────────────────────
@@ -669,7 +842,7 @@ async function classifyPrompt(prompt) {
   const libraryMatches = searchLibrary(prompt)
   const topMatch = libraryMatches[0]
   let libraryHint = ''
-  if (topMatch && topMatch._score >= 3) {
+  if (topMatch && topMatch._coverage >= 0.4) {
     libraryHint = `\n\nHINT: A very similar request ("${topMatch.prompt}") was previously handled in "${topMatch.mode}" mode. Prefer using "${topMatch.mode}" mode unless the new request is fundamentally different.`
   }
 
@@ -707,10 +880,10 @@ No markdown, no code fences, no explanation. Just the JSON.${libraryHint}`
 async function generateOps({ prompt, project, activeSceneId, libraryOps, keywords = [] }) {
   sendProgress('generating', 'Generating animation...')
 
-  const allowedObjectTypes = [
-    'rectangle','triangle','circle','line','arc','arrow','dot','polygon','text','latex',
-    'axes','graph','graphCursor','tangentLine','limitProbe','valueLabel',
-  ]
+    const allowedObjectTypes = [
+      'rectangle','triangle','circle','line','arc','arrow','dot','polygon','text','latex',
+      'axes','graph','graphCursor','tangentLine','limitProbe','valueLabel',
+    ]
 
   const scene = project?.scenes?.find(s => s.id === activeSceneId) || project?.scenes?.[0]
   const sceneDuration = scene?.duration || 5
@@ -752,7 +925,7 @@ async function generateOps({ prompt, project, activeSceneId, libraryOps, keyword
     ? '\n' + keywordInstructions.join('\n') + '\n'
     : ''
 
-  const system = [
+    const system = [
     'You are an in-app agent for a Manim animation editor and mathematics educator.',
     '',
     keywordSection,
@@ -763,12 +936,12 @@ async function generateOps({ prompt, project, activeSceneId, libraryOps, keyword
     '- Use clear, descriptive names for all objects',
     '',
     'TECHNICAL RULES:',
-    'You must output ONLY a single JSON object with keys: summary (string) and ops (array). No markdown, no code fences.',
-    'Your ops must be small patches to an existing project JSON. Do NOT output Python.',
-    'Prefer editing/adding objects inside the active scene.',
+      'You must output ONLY a single JSON object with keys: summary (string) and ops (array). No markdown, no code fences.',
+      'Your ops must be small patches to an existing project JSON. Do NOT output Python.',
+      'Prefer editing/adding objects inside the active scene.',
     'Allowed op types (MUST use exact camelCase): addObject, updateObject, deleteObject, addKeyframe, setSceneDuration, renameScene, addScene, deleteScene.',
     'IMPORTANT: op type must be camelCase like "addObject" NOT "add_object".',
-    `Allowed object types: ${allowedObjectTypes.join(', ')}.`,
+      `Allowed object types: ${allowedObjectTypes.join(', ')}.`,
     '',
     OPS_PROPERTY_SCHEMA,
     '',
@@ -777,12 +950,12 @@ async function generateOps({ prompt, project, activeSceneId, libraryOps, keyword
     'Full addObject example:',
     `{"summary":"Added a blue circle","ops":[{"type":"addObject","sceneId":"scene-1","object":{"type":"circle","x":0,"y":0,"radius":1.5,"fill":"#3b82f6","stroke":"#ffffff","strokeWidth":2,"opacity":1,"delay":0,"runTime":${sceneDuration},"animationType":"auto"}}]}`,
     '',
-    'Safety constraints:',
+      'Safety constraints:',
     '- Never introduce arbitrary code strings in formulas.',
-    '- Keep changes minimal and deterministic.',
+      '- Keep changes minimal and deterministic.',
     '- No markdown wrapping. Output raw JSON only.',
     librarySection,
-  ].join('\n')
+    ].join('\n')
 
   // Only send minimal context to avoid token overflow
   const objectCount = scene?.objects?.length || 0
@@ -791,15 +964,15 @@ async function generateOps({ prompt, project, activeSceneId, libraryOps, keyword
     sceneDuration,
     existingObjectCount: objectCount,
   }
-  
-  const user = [
+
+    const user = [
     'USER PROMPT:', prompt.trim(), '',
     'CONTEXT:', JSON.stringify(minimalContext, null, 2),
-  ].join('\n')
+    ].join('\n')
 
   const content = await llmChat([
-    { role: 'system', content: system },
-    { role: 'user', content: user },
+        { role: 'system', content: system },
+        { role: 'user', content: user },
   ])
 
   const parsed = extractFirstJsonObject(content)
@@ -930,7 +1103,7 @@ async function generatePython({ prompt, project, activeSceneId, libraryMatches, 
     { role: 'user', content: user },
   ])
 
-  const parsed = extractFirstJsonObject(content)
+    const parsed = extractFirstJsonObject(content)
   if (!parsed || !parsed.pythonCode) {
     console.error('[generatePython] Failed to parse response. Raw content:', content?.substring(0, 500))
     console.error('[generatePython] Parsed result:', parsed)
@@ -1353,13 +1526,54 @@ ipcMain.handle('agent-generate', async (event, payload) => {
       return { success: false, error: `No API key set for ${creds.provider}. Set it in AI settings.` }
     }
 
-    // ── Stage 1: Enrich abstract prompts ──
-    const enrichedPrompt = await enrichAbstractPrompt(prompt, keywords)
+    // ── Stage 0: Quick library check (Tier 1 — Direct Reuse) ──
+    // Before any LLM calls, check if library already has a near-exact match
+    const quickMatches = searchLibrary(prompt)
+    const bestMatch = quickMatches[0]
 
-    // ── Stage 2: Clarify (multiple-choice) ──
+    if (bestMatch && bestMatch._coverage >= 0.85 && bestMatch.pythonCode && !previousResult) {
+      console.log(`[agent-generate] Tier 1 DIRECT REUSE: "${bestMatch.prompt}" coverage=${bestMatch._coverage.toFixed(2)}`)
+      sendProgress('reusing', 'Found matching animation in library, rendering...')
+
+      // Extract scene name from the stored code
+      const sceneNameMatch = bestMatch.pythonCode.match(/class\s+(\w+)\s*\(\s*\w*Scene\s*\)/)
+      const sceneName = sceneNameMatch?.[1] || bestMatch.sceneName || 'ReusedScene'
+
+      // Render directly — zero LLM calls
+      sendProgress('rendering', 'Rendering preview...')
+      let renderResult = await renderManimInternal({
+        pythonCode: bestMatch.pythonCode,
+        sceneName,
+      })
+
+      // Extract ops for canvas
+      let extractedOps = bestMatch.ops || null
+      if (!extractedOps && renderResult.success) {
+        try {
+          extractedOps = await extractOpsFromPython({
+            pythonCode: bestMatch.pythonCode, project, activeSceneId,
+          })
+        } catch { /* best effort */ }
+      }
+
+      return {
+        success: true,
+        mode: 'python',
+        tier: 'reuse',
+        summary: `Reused from library: "${bestMatch.prompt}"`,
+        corrections: null,
+        videoBase64: renderResult?.success ? renderResult.videoBase64 : null,
+        renderError: renderResult?.success ? null : renderResult?.error,
+        _ops: extractedOps,
+        _pythonCode: bestMatch.pythonCode,
+        _sceneName: sceneName,
+      }
+    }
+
+    // ── Stage 1: Clarify (multiple-choice) ──
     // If the agent needs clarification and the user hasn't answered yet, return questions immediately.
     if (!clarificationAnswers) {
-      const questions = await clarifyPrompt({ prompt, mode: null, enrichedPrompt, keywords })
+      const questions = await clarifyPrompt({ prompt, mode: null, enrichedPrompt: null, keywords })
       if (questions?.length) {
         return { success: true, needsClarification: true, questions }
       }
@@ -1369,6 +1583,11 @@ ipcMain.handle('agent-generate', async (event, payload) => {
       ? `\n\nUSER CLARIFICATIONS (multiple-choice answers):\n${JSON.stringify(clarificationAnswers, null, 2)}\n`
       : ''
 
+    // ── Stage 2: Enrich abstract prompts ──
+    // Enrichment benefits from clarification answers, so include them as extra context.
+    const enrichmentInput = clarificationBlock ? `${prompt}${clarificationBlock}` : prompt
+    const enrichedPrompt = await enrichAbstractPrompt(enrichmentInput, keywords)
+
     // ── Stage 3: Classify ──
     const classification = await classifyPrompt(prompt)
     const mode = classification.mode
@@ -1376,43 +1595,67 @@ ipcMain.handle('agent-generate', async (event, payload) => {
     let generatorResult
 
     if (mode === 'python') {
-      // ── Stage 4a: Search library + online ──
-      // Use original prompt for search, enriched for generation
-      sendProgress('searching', 'Searching for examples...')
+      // ── Stage 4: Search library + online ──
+      sendProgress('searching', 'Searching library and examples...')
       const libraryMatches = searchLibrary(prompt)
       let onlineExamples = []
-      if (classification.searchTerms?.length) {
-        try {
-          onlineExamples = await searchManimExamples(classification.searchTerms)
-        } catch { /* continue without online examples */ }
-      }
 
-      // ── Stage 5a: Generate Python ──
-      // If enriched, prepend it as context; otherwise use original prompt
-      let effectivePrompt
-      if (enrichedPrompt) {
-        effectivePrompt = previousResult
-          ? `Conceptual breakdown:\n${enrichedPrompt}\n${clarificationBlock}\nPrevious result:\n${JSON.stringify(previousResult, null, 2)}\n\nUser request: ${prompt}`
-          : `Conceptual breakdown:\n${enrichedPrompt}\n${clarificationBlock}\nUser request: ${prompt}`
+      // ── Stage 4.5: Library Assembly — determine tier ──
+      const assembly = assembleFromLibrary({ prompt, libraryMatches })
+
+      if (assembly.tier === 'adapt' || assembly.tier === 'assemble') {
+        // ── Tier 2 or 3: Lightweight generation ──
+        let effectivePrompt = prompt
+        if (enrichedPrompt) {
+          effectivePrompt = `Conceptual breakdown:\n${enrichedPrompt}\n${clarificationBlock}\nUser request: ${prompt}`
+        } else if (clarificationBlock) {
+          effectivePrompt = `${prompt}${clarificationBlock}`
+        }
+
+        generatorResult = await generateFromAssembly({
+          tier: assembly.tier,
+          baseCode: assembly.baseCode,
+          prompt: effectivePrompt,
+          keywords,
+        })
+
+        // Extract canvas ops
+        generatorResult._extractedOps = await extractOpsFromPython({
+          pythonCode: generatorResult.pythonCode, project, activeSceneId,
+        })
+
+        console.log(`[agent-generate] Used ${assembly.tier} path (${assembly.components.length} components)`)
       } else {
-        effectivePrompt = previousResult
-          ? `Previous result context:\n${JSON.stringify(previousResult, null, 2)}\n${clarificationBlock}\nUser follow-up: ${prompt}`
-          : `${prompt}${clarificationBlock}`
+        // ── Tier 4: Full generation (current behavior) ──
+        if (classification.searchTerms?.length) {
+          try {
+            onlineExamples = await searchManimExamples(classification.searchTerms)
+          } catch { /* continue without online examples */ }
+        }
+
+        let effectivePrompt
+        if (enrichedPrompt) {
+          effectivePrompt = previousResult
+            ? `Conceptual breakdown:\n${enrichedPrompt}\n${clarificationBlock}\nPrevious result:\n${JSON.stringify(previousResult, null, 2)}\n\nUser request: ${prompt}`
+            : `Conceptual breakdown:\n${enrichedPrompt}\n${clarificationBlock}\nUser request: ${prompt}`
+        } else {
+          effectivePrompt = previousResult
+            ? `Previous result context:\n${JSON.stringify(previousResult, null, 2)}\n${clarificationBlock}\nUser follow-up: ${prompt}`
+            : `${prompt}${clarificationBlock}`
+        }
+
+        generatorResult = await generatePython({
+          prompt: effectivePrompt, project, activeSceneId, libraryMatches, onlineExamples, keywords,
+        })
+
+        generatorResult._extractedOps = await extractOpsFromPython({
+          pythonCode: generatorResult.pythonCode, project, activeSceneId,
+        })
       }
-
-      generatorResult = await generatePython({
-        prompt: effectivePrompt, project, activeSceneId, libraryMatches, onlineExamples, keywords,
-      })
-
-      // NEW: Extract canvas ops from the generated Python code
-      generatorResult._extractedOps = await extractOpsFromPython({
-        pythonCode: generatorResult.pythonCode, project, activeSceneId,
-      })
     } else {
-      // ── Stage 4b: Search library for ops matches ──
+      // ── Ops mode: Search library for ops matches ──
       const libraryOps = searchLibrary(prompt).filter(m => m.ops?.length)
 
-      // ── Stage 5b: Generate Ops ──
       let effectivePrompt
       if (enrichedPrompt) {
         effectivePrompt = previousResult
@@ -1428,7 +1671,6 @@ ipcMain.handle('agent-generate', async (event, payload) => {
     }
 
     // ── Stage 6: Review ──
-    // For ops mode, generate the Manim Python code FIRST so the reviewer can inspect it
     let preManimCode = null
     if (mode === 'ops') {
       const preObjects = []
@@ -1473,14 +1715,12 @@ ipcMain.handle('agent-generate', async (event, payload) => {
         }
       }
     } else {
-      // For ops mode: use the reviewed Manim code (reviewer may have corrected it)
       const finalManimCode = reviewed.manimCode || preManimCode
       if (!finalManimCode) {
         renderResult = { success: false, error: 'No Manim code to render' }
       } else {
         renderResult = await renderManimInternal({ pythonCode: finalManimCode, sceneName: 'Preview' })
 
-        // If reviewed code fails, try regenerating from the reviewed ops
         if (!renderResult.success && reviewed.ops) {
           const retryObjects = []
           for (const op of reviewed.ops) {
@@ -1497,7 +1737,6 @@ ipcMain.handle('agent-generate', async (event, payload) => {
       }
     }
 
-    // Determine the final Python code that was actually rendered (for both modes)
     const finalPythonCode = mode === 'python'
       ? reviewed.pythonCode
       : (reviewed.manimCode || preManimCode || null)
@@ -1512,10 +1751,7 @@ ipcMain.handle('agent-generate', async (event, payload) => {
       corrections: reviewed.corrections || null,
       videoBase64: renderResult?.success ? renderResult.videoBase64 : null,
       renderError: renderResult?.success ? null : renderResult?.error,
-      // Internal data (not shown to user, used when Apply is clicked)
-      // _ops is populated for BOTH modes now (extracted from Python or from ops generation)
       _ops: reviewed.ops || generatorResult._extractedOps || null,
-      // _pythonCode is ALWAYS populated — the exact code that rendered the preview
       _pythonCode: finalPythonCode,
       _sceneName: finalSceneName,
     }

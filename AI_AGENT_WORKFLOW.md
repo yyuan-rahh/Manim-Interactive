@@ -4,7 +4,7 @@
 The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transform user prompts into Manim animations. The system checks the library first and takes the cheapest possible path: direct reuse, lightweight adaptation, component assembly, or full generation.
 
 **Tiered Pipeline Flow**:
-0. **Quick Library Check** - If near-exact match exists, skip to render (Tier 1: 0 tokens, ~10s)
+0. **Quick Library Check** - If near-exact match exists, skip generation and render (Tier 1: 0 generation tokens, ~10s + optional ops extraction)
 1. **Clarification** - Ask multiple-choice questions to resolve ambiguities
 2. **Enrichment** - Expand abstract prompts into detailed animation plans (uses clarifications as context)
 3. **Classification** - Route to ops or Python generation mode
@@ -17,7 +17,7 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 **Tier Summary**:
 | Tier | When | LLM Calls | Tokens | Est. Time |
 |------|------|-----------|--------|-----------|
-| 1 - Direct Reuse | Same/near-identical prompt (coverage >= 0.85) | 0 | 0 | ~10s (render only) |
+| 1 - Direct Reuse | Same/near-identical prompt (coverage >= 0.85) | 0 (generation) + optional ops extraction | 0–~2K | ~10s (render) + optional extraction |
 | 2 - Adapt | Similar prompt, one strong match (coverage >= 0.5) | 1 (light) + review | ~3K | ~25s |
 | 3 - Assemble | Multiple components cover request (combined >= 0.5) | 1 (light) + review | ~4K | ~35s |
 | 4 - Full Generation | No library coverage | 3-5 (full pipeline) | ~10-15K | ~70s |
@@ -39,8 +39,8 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 │  Function: searchLibrary(prompt) — Jaccard + coverage scoring           │
 │                                                                          │
 │  If best match has coverage >= 0.85 and has pythonCode:                 │
-│  → TIER 1: DIRECT REUSE — skip all LLM calls, jump to render           │
-│  → 0 tokens, ~10s                                                       │
+│  → TIER 1: DIRECT REUSE — skip generation, jump to render               │
+│  → 0 generation tokens, ~10s (may still extract ops if missing)         │
 │                                                                          │
 │  Otherwise: continue to full pipeline                                   │
 └───────────────────────────┬─────────────────────────────────────────────┘
@@ -58,34 +58,14 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
      └────────────────┘
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                      STAGE 1: CLARIFICATION                             │
-│  Function: enrichAbstractPrompt(prompt, keywords)                       │
-│  Purpose: Expand abstract/conceptual prompts into detailed steps        │
+│  Function: clarifyPrompt({ prompt, mode, enrichedPrompt: null, keywords })│
+│  Purpose: Ask user multiple-choice questions when the prompt is         │
+│           ambiguous or underspecified                                   │
 │                                                                          │
 │  Decision Logic:                                                        │
-│  • ABSTRACT (e.g., "Euclid's proof", "Fourier transform")              │
-│    → Expand into: concept explanation + visual elements +               │
-│                   animation sequence + mathematical details             │
-│  • CONCRETE (e.g., "blue circle", "graph y=x^2")                       │
-│    → Pass through unchanged                                             │
-│                                                                          │
-│  Keyword Influence:                                                     │
-│  • visualize: Focus on diagrams, geometry, spatial relationships        │
-│  • intuition: Emphasize conceptual understanding, avoid formal rigor    │
-│  • prove: State theorem + assumptions + logical steps                   │
-│                                                                          │
-│  Output: enrichedPrompt (or null if concrete)                          │
-└───────────────────────────┬─────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      STAGE 2: ENRICHMENT                                │
-│  Function: clarifyPrompt({ prompt, enrichedPrompt, keywords })         │
-│  Purpose: Ask user multiple-choice questions for ambiguous prompts      │
-│                                                                          │
-│  Decision Logic:                                                        │
-│  • If keywords answer the question → skip that question                 │
-│  • If enrichedPrompt has details → skip redundant questions             │
-│  • Generate 0-3 questions with 2-4 options each                         │
+│  • Only ask when needed (0–3 questions max)                             │
+│  • Each question is multiple-choice (2–4 options)                       │
+│  • Keywords reduce ambiguity (don’t ask what is already specified)      │
 │                                                                          │
 │  Examples:                                                              │
 │  • "animate parabola" → "Show equation labels? Show vertex? Color?"     │
@@ -93,9 +73,31 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 │                                                                          │
 │  If needsClarification: true                                            │
 │    → Return to frontend, wait for user answers                          │
-│    → User answers questions → Continue pipeline                         │
+│    → User answers questions → Continue pipeline                          │
 │                                                                          │
-│  Output: needsClarification: true/false, questions: [], answers: []     │
+│  Output: needsClarification: true/false, questions: []                  │
+└───────────────────────────┬─────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      STAGE 2: ENRICHMENT                                │
+│  Function: enrichAbstractPrompt(promptPlusClarifications, keywords)     │
+│  Purpose: Expand abstract/conceptual prompts into a detailed animation  │
+│           plan (best-effort). Concrete prompts return null.             │
+│                                                                          │
+│  Decision Logic:                                                        │
+│  • ABSTRACT (e.g., "Euclid's proof", "Fourier transform")               │
+│    → Expand into: concept + visual elements + animation sequence +      │
+│      mathematical details                                               │
+│  • CONCRETE (e.g., "blue circle", "graph y=x^2")                        │
+│    → enrichedPrompt = null                                              │
+│                                                                          │
+│  Keyword Influence:                                                     │
+│  • visualize: Focus on diagrams, geometry, spatial relationships        │
+│  • intuition: Emphasize conceptual understanding, avoid formal rigor    │
+│  • prove: State theorem + assumptions + logical steps                   │
+│                                                                          │
+│  Output: enrichedPrompt (string) or null                                │
 └───────────────────────────┬─────────────────────────────────────────────┘
                             │
                             ▼
@@ -106,11 +108,11 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 │                                                                          │
 │  Step 1: Library Search                                                 │
 │  • Search local library with original prompt                            │
-│  • Score matches: keyword overlap + semantic similarity + formula match │
-│  • Bonus: ops mode +0.5, isComponent +0.3                               │
+│  • Score matches: keyword overlap (Jaccard + coverage) + formula bonus  │
+│  • Bonus: has ops +0.3, isComponent +0.5                                │
 │                                                                          │
 │  Step 2: Mode Decision                                                  │
-│  • If strong library match (score ≥ 3): bias toward that mode           │
+│  • If strong library match (coverage ≥ 0.4): add a hint to bias mode    │
 │  • Simple request (add/create single object) → ops mode                 │
 │  • Complex request (multiple steps, transforms, proofs) → python mode   │
 │  • Custom Manim code, advanced animations → python mode                 │
@@ -137,8 +139,9 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 │                          │  │  • combined >= 0.5 (multi)  → Tier 3    │
 │                          │  │  • otherwise                → Tier 4    │
 │                          │  │                                          │
-│                          │  │  Online Search (Tier 4 only)             │
-│                          │  │  • "manim community {term} example"      │
+│                          │  │  Online Examples (Tier 4 only)           │
+│                          │  │  • GitHub code search (ManimCommunity/manim,│
+│                          │  │    3b1b/manim) using searchTerms          │
 └────────────┬─────────────┘  └──────────────┬───────────────────────────┘
              │                               │
              ▼                               ▼
@@ -244,12 +247,13 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 │                                                                          │
 │  Decision:                                                              │
 │  • approved: true → Continue to user                                    │
-│  • approved: false → Regenerate (max 2 attempts)                        │
+│  • approved: false → Still continue, but return corrected output + notes │
 │                                                                          │
 │  Output:                                                                │
 │  • approved: boolean                                                    │
-│  • reason: string (if rejected)                                         │
-│  • suggestions: string (improvements)                                   │
+│  • corrections: string (what was fixed / why)                           │
+│  • summary: string                                                      │
+│  • ops OR pythonCode (corrected)                                        │
 └───────────────────────────┬─────────────────────────────────────────────┘
                             │
                             ▼
@@ -293,7 +297,7 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 **Tier 1 Decision**: If `coverage >= 0.85` and entry has `pythonCode` → **Direct Reuse**
 - Skip: Enrichment, Clarification, Classification, Generation, Review
 - Only run: Render (manim execution) + ops extraction
-- Result: **0 LLM tokens, ~10 seconds**
+- Result: **0 generation LLM tokens, ~10 seconds**, plus optional ops extraction if `_ops` isn’t already stored
 
 ---
 
@@ -372,10 +376,11 @@ Is there a strong library match (coverage >= 0.4)?
 **OPS PATH**: Search library for ops-compatible entries
 **PYTHON PATH**: Search library + online Manim repositories
 
-**Online Search Query Format** (Tier 4 only):
-```
-"manim community {searchTerm} example site:github.com"
-```
+**Online Examples Source** (Tier 4 only):
+- Uses GitHub Search API (code search) scoped to:
+  - `ManimCommunity/manim`
+  - `3b1b/manim`
+- Query is built from `searchTerms` + `language:python`
 
 **Context Limits** (to prevent token overflow):
 - Library components: 1 entry, max 1200 chars
@@ -688,25 +693,27 @@ Components:
 ---
 
 ### Search
-**File**: `electron/main.js` → `searchLibrary()`
+**Files**:
+- `electron/library.js` → `searchLibrary()` (used by `agent-generate`)
+- `electron/main.js` → `semanticSearchLibrary()` (used by `library-search` IPC)
 
-**Scoring Algorithm**:
-```javascript
-score = 0
+**Keyword scoring (agent pipeline)**:
+- Extract keywords from prompt and each entry (stopword-filtered)
+- Compute:
+  - **Jaccard** = \(|intersection| / |union|\)
+  - **Coverage** = \(|intersection| / |prompt|\)
+- Score:
+  - `score = (jaccard * 3) + (coverage * 5)`
+  - `+2` per math-expression substring match
+  - `+0.3` if entry has `ops`
+  - `+0.5` if `isComponent`
+- Return top 10 results by score
 
-// Keyword overlap
-for each word in prompt:
-  if word in entry.prompt: score += 1
-  if word in entry.description: score += 0.5
-
-// Bonus points
-if semantic_similarity > 0.7: score += 2
-if formula_match: score += 1.5
-if entry.ops exists: score += 0.5
-if entry.isComponent: score += 0.3
-
-return top 5 matches, sorted by score
-```
+**Semantic reranking (library UI search)**:
+- If OpenAI credentials are available, compute an embedding for the query
+- Combine keyword score with cosine similarity:
+  - Existing keyword hits get `+ (semanticScore * 4)`
+  - Pure semantic matches can be added when `semanticScore > 0.3`
 
 ---
 
@@ -743,10 +750,10 @@ existingCode += "\n\n# From library\n" + newConstructBody
 - Limit online examples (1000 chars max)
 
 ### Generation Failures
-**Retry Logic**:
-- Max 2 attempts with review feedback
-- After 2 failures, return error to user
-- Log detailed error messages to console
+**Current behavior**:
+- **JSON continuation**: if the model response is truncated mid-JSON, request up to 2 continuations (`extractJsonWithContinuation`)
+- **Rate limits**: Anthropic calls retry with backoff (up to 3 attempts)
+- **No fixed regenerate loop**: the pipeline does not currently run a hard “max 2 generations with review feedback” loop
 
 ### Rendering Failures
 **Manim Errors**:
@@ -789,7 +796,7 @@ existingCode += "\n\n# From library\n" + newConstructBody
 ## Performance Optimizations
 
 ### Tiered Library Reuse
-- **Tier 1 (Direct Reuse)**: 0 LLM tokens, ~10s — exact/near-exact match from library
+- **Tier 1 (Direct Reuse)**: 0 generation tokens, ~10s — exact/near-exact match from library (may still extract ops if missing)
 - **Tier 2 (Adapt)**: ~3K tokens, ~25s — lightweight "adapt this code" LLM call
 - **Tier 3 (Assemble)**: ~4K tokens, ~35s — merge components + fill gaps
 - **Tier 4 (Full Generation)**: ~10-15K tokens, ~70s — standard pipeline

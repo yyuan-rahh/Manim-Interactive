@@ -51,18 +51,41 @@ This creates a distributable `.dmg` and `.zip` in the `release/` folder.
 
 1. **Add Objects**: Click shapes in the palette to add them to the canvas
 2. **Edit Properties**: Select an object and use the Properties panel to modify it
-3. **View Code**: The Python code panel shows the generated Manim code (read-only, updates on changes)
+3. **Edit Code**: The Python code panel shows the generated Manim code, supports editing, and can **Sync to Canvas** (best-effort parse of Python → canvas objects)
 4. **Add Keyframes**: Use the timeline to add position/opacity/rotation keyframes
 5. **Preview**: Click "Preview" to render and play the animation
 6. **Save/Load**: Use the toolbar to save projects as JSON or open existing ones
 
 ### AI Assistant (experimental)
 
-The app includes an **ops-based AI assistant** (click **AI** in the toolbar). It generates small patch operations against the project JSON (not raw Python), which improves safety and reliability.
+The app includes an AI assistant (click **AI** in the toolbar) that follows a **tiered, library-first pipeline** to produce either:
 
-- **API key**: set `OPENAI_API_KEY` in your environment, or set it inside the AI modal settings (stored in Electron app settings).
-- **Model/Base URL**: configurable in the AI modal.
-- **Safety**: formulas embedded into generated Python are sanitized with a strict whitelist to reduce injection risk.
+- **ops mode**: small, structured patch operations against the project JSON (safer for simple edits)
+- **python mode**: full Manim CE Python code (for complex, multi-step animations)
+
+The canonical workflow map lives in `AI_AGENT_WORKFLOW.md`.
+
+#### Pipeline summary (matches `AI_AGENT_WORKFLOW.md`)
+
+- **Stage 0 (Quick library check)**: if a near-exact match is found (coverage ≥ 0.85), the app **reuses library code and renders immediately**.  
+  This is **0 generation calls**, but may still run an **ops extraction** step if `_ops` was not already stored for that entry.
+- **Stage 1 (Clarification)**: ask 0–3 multiple-choice questions when the prompt is ambiguous.
+- **Stage 2 (Enrichment)**: for abstract prompts, expand into a detailed plan (uses clarification answers as context).
+- **Stage 3 (Classification)**: choose **ops** vs **python** (library matches can bias the decision).
+- **Stage 4 (Resource gathering)**: search the local library; in full-generation python mode, optionally fetch **GitHub code examples** (ManimCommunity/manim and 3b1b/manim) using `searchTerms`.
+- **Stage 5 (Generation)**:
+  - **Tier 2 Adapt**: adapt one strong library match (coverage ≥ 0.5)
+  - **Tier 3 Assemble**: combine multiple components (combined coverage ≥ 0.5)
+  - **Tier 4 Full**: generate from scratch (with optional online examples)
+- **Stage 6 (Review)**: quality pass that can correct output and attach notes (`corrections`).
+- **Stage 7 (Auto-render)**: render a preview; if python render fails, attempt an automatic fix + re-render.
+
+#### Configuration / safety
+
+- **Providers**: OpenAI or Anthropic (selectable in the AI modal settings).
+- **API keys**: set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`, or set keys in the AI modal (stored in Electron app settings).
+- **Models/Base URL**: configurable in the AI modal.
+- **Formula safety**: formulas used for graphing are parsed/sanitized with a strict whitelist to reduce injection risk.
 
 #### Focus Keywords
 
@@ -70,7 +93,7 @@ You can select **focus keywords** below the prompt input to guide how the AI int
 
 - **visualize**: Emphasizes diagrams, geometric shapes, and graphs combined with text labels. Prioritizes visual depiction over abstract notation. Use this when you want the AI to "show" rather than "tell" through equations.
 
-- **intuitive**: Focuses on conceptual understanding over mathematical rigor. Uses fewer equations and more visual analogies. Avoids formal proofs and technical notation in favor of plain-language explanations. Best for building intuition about a concept.
+- **intuition / intuitive**: Focuses on conceptual understanding over mathematical rigor. Uses fewer equations and more visual analogies. Avoids formal proofs and technical notation in favor of plain-language explanations. Best for building intuition about a concept.
 
 - **prove**: States theorems clearly with all assumptions, provides step-by-step logical arguments with mathematical rigor, and includes clear conclusions. Use this when you want a formal mathematical proof with proper notation and logical structure.
 
@@ -86,10 +109,15 @@ ManimInteractive/
 ├── electron/           # Electron main process
 │   ├── main.js         # Main process entry
 │   └── preload.js      # Preload script (IPC bridge)
+│   ├── agent-pipeline.js
+│   ├── llm.js
+│   ├── library.js
+│   └── renderer.js
 ├── src/                # React app (renderer process)
 │   ├── components/     # UI components
 │   ├── codegen/        # Manim code generator
 │   ├── project/        # Project schema and utilities
+│   ├── store/          # Zustand state
 │   ├── App.jsx         # Main app component
 │   └── main.jsx        # React entry point
 ├── package.json

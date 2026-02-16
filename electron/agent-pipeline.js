@@ -1,6 +1,9 @@
 /**
- * Agent pipeline stages: classify, enrich, clarify, generateOps,
- * generatePython, extractOps, reviewOutput, decomposeAnimation.
+ * Agent pipeline helpers used by `agent-generate`:
+ * clarify → enrich → classify → generate(ops/python) → review → (render/fix in main).
+ *
+ * Exports: classifyPrompt, clarifyPrompt, enrichAbstractPrompt, generateOps,
+ * generatePython, extractOpsFromPython, reviewOutput, decomposeAnimation, generateFromAssembly.
  *
  * Expects `deps` from init():
  *   - llmChat(messages, options)

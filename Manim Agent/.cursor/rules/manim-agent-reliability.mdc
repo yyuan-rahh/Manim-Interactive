@@ -1,0 +1,15 @@
+---
+description: Reliability guardrails for Manim LLM + pattern library + render verification workflows.
+alwaysApply: true
+---
+
+# Reliability guardrails (Manim agent work)
+
+- Prefer **structured scene representations** (app schema / ops) over raw Manim Python.
+- If generating Python, use a **fixed template** and minimal imports; avoid arbitrary file/network actions.
+- Treat GitHub code as **untrusted** until it:
+  - passes license checks
+  - is rewritten/normalized
+  - renders successfully in our environment
+- Use **patch-only** fixes after failures; avoid full rewrites unless necessary.
+- Always maintain a “last known good” version; never destroy working output during repairs.

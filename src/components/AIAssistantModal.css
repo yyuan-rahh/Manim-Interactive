@@ -287,6 +287,58 @@
 }
 
 
+/* ── Keywords Guide ── */
+.ai-keywords-guide {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(168, 85, 247, 0.06);
+  border: 1px solid rgba(168, 85, 247, 0.15);
+}
+
+.ai-keywords-guide-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #e9d5ff;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ai-keywords-guide-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ai-keyword-item {
+  font-size: 11px;
+  line-height: 1.5;
+  display: flex;
+  gap: 6px;
+}
+
+.ai-keyword-name {
+  font-weight: 700;
+  color: #c084fc;
+  flex-shrink: 0;
+}
+
+.ai-keyword-desc {
+  color: rgba(229, 231, 235, 0.75);
+}
+
+.ai-keywords-guide-example {
+  font-size: 10px;
+  color: rgba(229, 231, 235, 0.55);
+  font-style: italic;
+  padding-top: 6px;
+  border-top: 1px solid rgba(168, 85, 247, 0.15);
+}
+
+
 /* ── Progress indicator ── */
 .ai-progress {
   display: flex;
@@ -446,6 +498,23 @@
 
 .ai-input:focus {
   border-color: rgba(59, 130, 246, 0.5);
+}
+
+/* ── Streaming preview ── */
+.ai-streaming-preview {
+  margin-top: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.5);
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 /* ── Responsive ── */

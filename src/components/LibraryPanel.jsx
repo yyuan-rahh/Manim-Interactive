@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import './LibraryPanel.css'
 
 function timeAgo(dateStr) {
@@ -19,6 +19,13 @@ function timeAgo(dateStr) {
   }
 }
 
+const CATEGORY_FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'components', label: 'Components' },
+  { id: 'full', label: 'Full Animations' },
+  { id: 'favorites', label: 'Favorites' },
+]
+
 export default function LibraryPanel({
   refreshKey,
   onApplyOps,
@@ -29,6 +36,15 @@ export default function LibraryPanel({
   const [entries, setEntries] = useState([])
   const [searchQuery, setSearchQuery] = useState('')
   const [loading, setLoading] = useState(true)
+  const [activeFilter, setActiveFilter] = useState('all')
+  const [hoverEntry, setHoverEntry] = useState(null)
+  const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 })
+  const hoverTimerRef = useRef(null)
+  const [favorites, setFavorites] = useState(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem('library-favorites') || '[]'))
+    } catch { return new Set() }
+  })
 
   // Load all library entries on mount
   const loadEntries = useCallback(async () => {
@@ -50,16 +66,36 @@ export default function LibraryPanel({
     loadEntries()
   }, [loadEntries, refreshKey])
 
-  // Filter entries by search query (client-side, instant)
+  // Filter entries by search query + category filter (client-side, instant)
   const filtered = useMemo(() => {
-    if (!searchQuery.trim()) return entries
-    const q = searchQuery.toLowerCase().trim()
-    const words = q.split(/\s+/).filter(w => w.length > 1)
-    return entries.filter(e => {
-      const hay = `${e.prompt} ${e.description} ${(e.tags || []).join(' ')}`.toLowerCase()
-      return words.every(w => hay.includes(w))
+    let result = entries
+
+    // Apply category filter
+    if (activeFilter === 'components') {
+      result = result.filter(e => e.isComponent)
+    } else if (activeFilter === 'full') {
+      result = result.filter(e => !e.isComponent)
+    } else if (activeFilter === 'favorites') {
+      result = result.filter(e => favorites.has(e.id))
+    }
+
+    // Apply text search
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim()
+      const words = q.split(/\s+/).filter(w => w.length > 1)
+      result = result.filter(e => {
+        const hay = `${e.prompt} ${e.description} ${(e.tags || []).join(' ')}`.toLowerCase()
+        return words.every(w => hay.includes(w))
+      })
+    }
+
+    // Sort favorites to top
+    return result.sort((a, b) => {
+      const aFav = favorites.has(a.id) ? 1 : 0
+      const bFav = favorites.has(b.id) ? 1 : 0
+      return bFav - aFav
     })
-  }, [entries, searchQuery])
+  }, [entries, searchQuery, activeFilter, favorites])
 
   const handleDelete = async (id) => {
     try {
@@ -79,6 +115,51 @@ export default function LibraryPanel({
       setEntries([])
     } catch { /* ignore */ }
   }
+
+  const handleExport = async () => {
+    try {
+      const result = await window.electronAPI.libraryExport?.()
+      if (result?.success) {
+        console.log('Library exported to:', result.path)
+      }
+    } catch { /* ignore */ }
+  }
+
+  const handleImport = async () => {
+    try {
+      const result = await window.electronAPI.libraryImport?.()
+      if (result?.success) {
+        console.log(`Imported ${result.added} new entries`)
+        loadEntries()
+      } else if (result?.error) {
+        alert(`Import failed: ${result.error}`)
+      }
+    } catch { /* ignore */ }
+  }
+
+  const handleEntryMouseEnter = useCallback((e, entry) => {
+    clearTimeout(hoverTimerRef.current)
+    hoverTimerRef.current = setTimeout(() => {
+      const rect = e.currentTarget.getBoundingClientRect()
+      setHoverPos({ x: rect.right + 8, y: rect.top })
+      setHoverEntry(entry)
+    }, 400)
+  }, [])
+
+  const handleEntryMouseLeave = useCallback(() => {
+    clearTimeout(hoverTimerRef.current)
+    setHoverEntry(null)
+  }, [])
+
+  const toggleFavorite = useCallback((id) => {
+    setFavorites(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      try { localStorage.setItem('library-favorites', JSON.stringify([...next])) } catch {}
+      return next
+    })
+  }, [])
 
   const handleDragStart = (e, entry) => {
     // Set drag data with the full library entry
@@ -114,15 +195,47 @@ export default function LibraryPanel({
           onChange={(e) => setSearchQuery(e.target.value)}
           spellCheck={false}
         />
-        {entries.length > 0 && (
+        <div className="library-header-actions">
           <button
-            className="library-clear-btn"
-            onClick={handleClearAll}
-            title="Clear entire library"
+            className="library-action-sm"
+            onClick={handleImport}
+            title="Import library from file"
           >
-            Clear All
+            Import
           </button>
-        )}
+          <button
+            className="library-action-sm"
+            onClick={handleExport}
+            title="Export library to file"
+            disabled={entries.length === 0}
+          >
+            Export
+          </button>
+          {entries.length > 0 && (
+            <button
+              className="library-clear-btn"
+              onClick={handleClearAll}
+              title="Clear entire library"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="library-filters">
+        {CATEGORY_FILTERS.map(f => (
+          <button
+            key={f.id}
+            className={`library-filter-btn ${activeFilter === f.id ? 'active' : ''}`}
+            onClick={() => setActiveFilter(f.id)}
+          >
+            {f.label}
+            {f.id === 'favorites' && favorites.size > 0 && (
+              <span className="library-filter-count">{favorites.size}</span>
+            )}
+          </button>
+        ))}
       </div>
 
       <div className="library-entries">
@@ -140,6 +253,8 @@ export default function LibraryPanel({
             className="library-entry"
             draggable
             onDragStart={(e) => handleDragStart(e, entry)}
+            onMouseEnter={(e) => handleEntryMouseEnter(e, entry)}
+            onMouseLeave={handleEntryMouseLeave}
           >
             <div className="library-entry-thumb">
               {entry.videoThumbnail ? (
@@ -171,8 +286,25 @@ export default function LibraryPanel({
                   {timeAgo(entry.createdAt)}
                 </span>
               </div>
+              {entry.tags?.length > 0 && (
+                <div className="library-entry-tags">
+                  {entry.tags.slice(0, 4).map((tag, i) => (
+                    <span key={i} className="library-tag">{tag}</span>
+                  ))}
+                  {entry.tags.length > 4 && (
+                    <span className="library-tag-more">+{entry.tags.length - 4}</span>
+                  )}
+                </div>
+              )}
             </div>
             <div className="library-entry-actions">
+              <button
+                className={`library-action-btn star ${favorites.has(entry.id) ? 'active' : ''}`}
+                onClick={() => toggleFavorite(entry.id)}
+                title={favorites.has(entry.id) ? 'Remove from favorites' : 'Add to favorites'}
+              >
+                {favorites.has(entry.id) ? '★' : '☆'}
+              </button>
               <button
                 className="library-action-btn"
                 onClick={() => handleUseAsPrompt(entry)}
@@ -191,6 +323,41 @@ export default function LibraryPanel({
           </div>
         ))}
       </div>
+
+      {/* Hover preview tooltip */}
+      {hoverEntry && (
+        <div
+          className="library-hover-preview"
+          style={{
+            position: 'fixed',
+            left: Math.min(hoverPos.x, window.innerWidth - 320),
+            top: Math.max(8, Math.min(hoverPos.y, window.innerHeight - 300)),
+            zIndex: 9999,
+          }}
+          onMouseEnter={() => clearTimeout(hoverTimerRef.current)}
+          onMouseLeave={handleEntryMouseLeave}
+        >
+          {hoverEntry.videoThumbnail && (
+            <div className="hover-preview-thumb">
+              <img
+                src={`data:image/jpeg;base64,${hoverEntry.videoThumbnail}`}
+                alt=""
+                style={{ width: '100%', borderRadius: 4 }}
+              />
+            </div>
+          )}
+          <div className="hover-preview-prompt">{hoverEntry.prompt}</div>
+          {hoverEntry.description && (
+            <div className="hover-preview-desc">{hoverEntry.description}</div>
+          )}
+          {(hoverEntry.pythonCode || hoverEntry.codeSnippet) && (
+            <pre className="hover-preview-code">
+              {(hoverEntry.codeSnippet || hoverEntry.pythonCode || '').slice(0, 400)}
+              {(hoverEntry.codeSnippet || hoverEntry.pythonCode || '').length > 400 && '...'}
+            </pre>
+          )}
+        </div>
+      )}
     </div>
   )
 }

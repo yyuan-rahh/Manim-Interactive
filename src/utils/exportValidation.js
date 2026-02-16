@@ -1,15 +1,24 @@
 /**
- * Export validation utilities for sanity checks before rendering
+ * Export validation utilities for sanity checks before rendering.
  */
+
+/** @typedef {import('../types').Scene} Scene */
 
 import { getLinkingStatus } from './linking'
 import { evalAt } from './graphTools'
 import { mathParser } from './mathParser'
 
 /**
- * Validate scene before export
- * @param {Object} scene - Scene object
- * @returns {Array<{level: string, message: string, objectId?: string}>} Array of issues
+ * @typedef {object} ValidationIssue
+ * @property {'error'|'warning'|'info'} level
+ * @property {string} message
+ * @property {string} [objectId]
+ */
+
+/**
+ * Validate scene before export.
+ * @param {Scene} scene
+ * @returns {ValidationIssue[]}
  */
 export function validateScene(scene) {
   const issues = []

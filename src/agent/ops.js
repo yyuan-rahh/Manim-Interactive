@@ -6,6 +6,11 @@
  * - We validate + apply ops defensively
  * - Undo/redo is handled by the App-level history snapshotting
  */
+
+/** @typedef {import('../types').AgentOp} AgentOp */
+/** @typedef {import('../types').SceneObject} SceneObject */
+/** @typedef {import('../types').Project} Project */
+
 import { validateProject } from '../project/schema'
  
 const ALLOWED_OP_TYPES = new Set([
@@ -39,6 +44,11 @@ function normalizeColor(val) {
   return CSS_COLOR_MAP[lower] || val
 }
 
+/**
+ * Normalise LLM-generated object properties to the canvas schema.
+ * @param {Partial<SceneObject>} obj
+ * @returns {Partial<SceneObject>}
+ */
 export function normalizeObjectProps(obj) {
   if (!obj || typeof obj !== 'object') return obj
   const out = { ...obj }
@@ -68,6 +78,14 @@ export function normalizeObjectProps(obj) {
   return out
 }
  
+/**
+ * Apply an array of agent operations to a project, returning a new project.
+ *
+ * @param {Project} project
+ * @param {AgentOp[]} ops
+ * @param {{ defaultSceneId?: string }} [options]
+ * @returns {{ project: Project, warnings: string[] }}
+ */
 export function applyAgentOps(project, ops, { defaultSceneId } = {}) {
   const warnings = []
   const next = structuredClone(project)

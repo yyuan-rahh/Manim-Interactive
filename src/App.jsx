@@ -8,26 +8,59 @@ import Timeline from './components/Timeline'
 import Toolbar from './components/Toolbar'
 import VideoPreview from './components/VideoPreview'
 import AIAssistantModal from './components/AIAssistantModal'
-import { createEmptyProject, createEmptyScene, validateProject, createDemoScene } from './project/schema'
-import { generateManimCode, sanitizeClassName } from './codegen/generator'
-import { generateObjectName } from './utils/objectLabel'
+import InlineAIChat from './components/InlineAIChat'
+import { sanitizeClassName } from './codegen/generator'
+import { parsePythonToOps } from './codegen/pythonToOps'
 import { validateScene, getValidationSummary } from './utils/exportValidation'
 import { applyAgentOps } from './agent/ops'
+import useProjectStore from './store/useProjectStore'
 import './App.css'
 
 function App() {
-  const [project, setProject] = useState(createEmptyProject())
-  const [activeSceneId, setActiveSceneId] = useState(project.scenes[0]?.id)
-  const [selectedObjectIds, setSelectedObjectIds] = useState([])
-  const [currentTime, setCurrentTime] = useState(0)
+  // ── Zustand store — core project state ──
+  const project = useProjectStore((s) => s.project)
+  const activeSceneId = useProjectStore((s) => s.activeSceneId)
+  const selectedObjectIds = useProjectStore((s) => s.selectedObjectIds)
+  const currentTime = useProjectStore((s) => s.currentTime)
+  const generatedCode = useProjectStore((s) => s.generatedCode)
+  const customCode = useProjectStore((s) => s.customCode)
+  const isCustomCodeSynced = useProjectStore((s) => s.isCustomCodeSynced)
+
+  const setCurrentTime = useProjectStore((s) => s.setCurrentTime)
+  const setSelectedObjectIds = useProjectStore((s) => s.setSelectedObjectIds)
+  const setActiveSceneId = useProjectStore((s) => s.setActiveSceneId)
+
+  const addObject = useProjectStore((s) => s.addObject)
+  const updateObject = useProjectStore((s) => s.updateObject)
+  const deleteObject = useProjectStore((s) => s.deleteObject)
+  const duplicateObject = useProjectStore((s) => s.duplicateObject)
+  const addScene = useProjectStore((s) => s.addScene)
+  const deleteScene = useProjectStore((s) => s.deleteScene)
+  const renameScene = useProjectStore((s) => s.renameScene)
+  const reorderScenes = useProjectStore((s) => s.reorderScenes)
+  const duplicateScene = useProjectStore((s) => s.duplicateScene)
+  const addKeyframe = useProjectStore((s) => s.addKeyframe)
+  const bringForward = useProjectStore((s) => s.bringForward)
+  const sendBackward = useProjectStore((s) => s.sendBackward)
+  const bringToFront = useProjectStore((s) => s.bringToFront)
+  const sendToBack = useProjectStore((s) => s.sendToBack)
+  const undo = useProjectStore((s) => s.undo)
+  const redo = useProjectStore((s) => s.redo)
+  const clearAllObjects = useProjectStore((s) => s.clearAllObjects)
+  const loadDemo = useProjectStore((s) => s.loadDemo)
+  const deleteSelectedObjects = useProjectStore((s) => s.deleteSelectedObjects)
+  const applyOpsFromAgent = useProjectStore((s) => s.applyOpsFromAgent)
+  const applyPythonCodeFromAgent = useProjectStore((s) => s.applyPythonCodeFromAgent)
+  const storeLoadProject = useProjectStore((s) => s.loadProject)
+  const storeSaveProject = useProjectStore((s) => s.saveProject)
+  const regenerateCode = useProjectStore((s) => s.regenerateCode)
+  const clampTime = useProjectStore((s) => s.clampTime)
+
+  // ── Local UI state (not in store) ──
   const [timelineHeight, setTimelineHeight] = useState(220)
   const [codePanelHeight, setCodePanelHeight] = useState(280)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(220)
   const [rightPanelWidth, setRightPanelWidth] = useState(320)
-  const [generatedCode, setGeneratedCode] = useState('')
-  const customCodeSyncRef = useRef(true) // tracks isCustomCodeSynced without causing re-renders
-  const [customCode, setCustomCode] = useState('')
-  const [isCustomCodeSynced, setIsCustomCodeSynced] = useState(true)
   const [renderLogs, setRenderLogs] = useState('')
   const [isRendering, setIsRendering] = useState(false)
   const [videoData, setVideoData] = useState(null)
@@ -36,17 +69,8 @@ function App() {
   const [sidebarTab, setSidebarTab] = useState('library')
   const [aiPrefillPrompt, setAiPrefillPrompt] = useState('')
   const [libraryRefreshKey, setLibraryRefreshKey] = useState(0)
+  const [renderQuality, setRenderQuality] = useState('low')
 
-  // Undo/redo history (captures project + selection + code state)
-  const [history, setHistory] = useState({ past: [], future: [] })
-  const stateRef = useRef({
-    project,
-    activeSceneId,
-    selectedObjectIds,
-    customCode,
-    isCustomCodeSynced,
-  })
-  const lastCommitRef = useRef({ key: null, time: 0 })
   const centerPanelRef = useRef(null)
   const rightPanelRef = useRef(null)
   const resizeRef = useRef(null)
@@ -57,13 +81,13 @@ function App() {
 
   // Keep time within scene bounds when switching scenes / durations
   useEffect(() => {
-    const dur = activeScene?.duration || 0
-    setCurrentTime(t => Math.max(0, Math.min(dur, t)))
-  }, [activeSceneId, activeScene?.duration])
+    clampTime()
+  }, [activeSceneId, activeScene?.duration, clampTime])
 
+  // Regenerate code when project changes
   useEffect(() => {
-    stateRef.current = { project, activeSceneId, selectedObjectIds, customCode, isCustomCodeSynced }
-  }, [project, activeSceneId, selectedObjectIds, customCode, isCustomCodeSynced])
+    regenerateCode()
+  }, [project, activeSceneId, regenerateCode])
 
   const startResize = useCallback((type, e) => {
     e.preventDefault()
@@ -127,67 +151,6 @@ function App() {
     return tag === 'input' || tag === 'textarea' || tag === 'select'
   }
 
-  const commit = useCallback((actionKey, fn) => {
-    const now = Date.now()
-    const last = lastCommitRef.current
-    const coalesceWindowMs = 300
-    const shouldPush = !(actionKey && last.key === actionKey && (now - last.time) < coalesceWindowMs)
-
-    if (shouldPush) {
-      const snap = stateRef.current
-      setHistory(h => ({ past: [...h.past, snap], future: [] }))
-    } else {
-      // Still clear redo stack if user is making new changes
-      setHistory(h => (h.future.length ? { ...h, future: [] } : h))
-    }
-
-    lastCommitRef.current = { key: actionKey, time: now }
-    fn()
-  }, [])
-
-  const undo = useCallback(() => {
-    setHistory(h => {
-      if (!h.past.length) return h
-      const prev = h.past[h.past.length - 1]
-      const cur = stateRef.current
-      setProject(prev.project)
-      setActiveSceneId(prev.activeSceneId)
-      setSelectedObjectIds(prev.selectedObjectIds)
-      setCustomCode(prev.customCode)
-      setIsCustomCodeSynced(prev.isCustomCodeSynced)
-      customCodeSyncRef.current = prev.isCustomCodeSynced
-      return { past: h.past.slice(0, -1), future: [cur, ...h.future] }
-    })
-  }, [])
-
-  const redo = useCallback(() => {
-    setHistory(h => {
-      if (!h.future.length) return h
-      const next = h.future[0]
-      const cur = stateRef.current
-      setProject(next.project)
-      setActiveSceneId(next.activeSceneId)
-      setSelectedObjectIds(next.selectedObjectIds)
-      setCustomCode(next.customCode)
-      setIsCustomCodeSynced(next.isCustomCodeSynced)
-      customCodeSyncRef.current = next.isCustomCodeSynced
-      return { past: [...h.past, cur], future: h.future.slice(1) }
-    })
-  }, [])
-
-  // Regenerate code when project changes
-  useEffect(() => {
-    const code = generateManimCode(project, activeSceneId)
-    setGeneratedCode(code)
-    // Only overwrite customCode if it was previously synced with generatedCode.
-    // When the AI sets custom Python code (isCustomCodeSynced = false), we must
-    // NOT clobber it when ops also update the project in the same Apply action.
-    if (customCodeSyncRef.current) {
-      setCustomCode(code)
-      setIsCustomCodeSynced(true)
-    }
-  }, [project, activeSceneId])
-
   // Listen for render logs
   useEffect(() => {
     if (window.electronAPI) {
@@ -198,342 +161,14 @@ function App() {
     }
   }, [])
 
-  // Scene management
-  const addScene = useCallback(() => {
-    commit('scene:add', () => {
-      const newScene = createEmptyScene(`Scene ${project.scenes.length + 1}`)
-      setProject(prev => ({
-        ...prev,
-        scenes: [...prev.scenes, newScene]
-      }))
-      setActiveSceneId(newScene.id)
-      setSelectedObjectIds([])
-    })
-  }, [project.scenes.length])
-
-  const deleteScene = useCallback((sceneId) => {
-    if (project.scenes.length <= 1) return
-    commit('scene:delete', () => {
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.filter(s => s.id !== sceneId)
-      }))
-      if (activeSceneId === sceneId) {
-        setActiveSceneId(project.scenes.find(s => s.id !== sceneId)?.id)
-        setSelectedObjectIds([])
-      }
-    })
-  }, [project.scenes, activeSceneId])
-
-  const renameScene = useCallback((sceneId, newName) => {
-    commit(`scene:rename:${sceneId}`, () => {
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.map(s => 
-          s.id === sceneId ? { ...s, name: newName } : s
-        )
-      }))
-    })
-  }, [])
-
-  const reorderScenes = useCallback((fromIndex, toIndex) => {
-    commit('scene:reorder', () => {
-      setProject(prev => {
-        const newScenes = [...prev.scenes]
-        const [removed] = newScenes.splice(fromIndex, 1)
-        newScenes.splice(toIndex, 0, removed)
-        return { ...prev, scenes: newScenes }
-      })
-    })
-  }, [])
-
-  const duplicateScene = useCallback((sceneId) => {
-    const scene = project.scenes.find(s => s.id === sceneId)
-    if (!scene) return
-    commit('scene:duplicate', () => {
-      const newScene = {
-        ...JSON.parse(JSON.stringify(scene)),
-        id: crypto.randomUUID(),
-        name: `${scene.name} (Copy)`
-      }
-      setProject(prev => ({
-        ...prev,
-        scenes: [...prev.scenes, newScene]
-      }))
-      setActiveSceneId(newScene.id)
-      setSelectedObjectIds([])
-    })
-  }, [project.scenes])
-
-  // Object management
-  const addObject = useCallback((objectType, overrides = {}) => {
-    if (!activeScene) return
-
-    commit(`obj:add:${objectType}`, () => {
-      const existingObjects = activeScene.objects || []
-      const baseObject = createObject(objectType, existingObjects)
-      const newObject = { ...baseObject, ...overrides }
-      // Ensure name is set (can be overridden in overrides)
-      if (!newObject.name) {
-        newObject.name = generateObjectName(newObject, existingObjects)
-      }
-      
-      // Auto-link graphs to existing axes if not already linked
-      if (newObject.type === 'graph' && !newObject.axesId) {
-        const existingAxes = existingObjects.find(o => o.type === 'axes')
-        if (existingAxes) {
-          newObject.axesId = existingAxes.id
-          // Position graph at axes origin
-          newObject.x = existingAxes.x
-          newObject.y = existingAxes.y
-        }
-      }
-      
-      // Auto-link graph tools to existing graphs
-      if (['graphCursor', 'tangentLine', 'limitProbe', 'valueLabel'].includes(newObject.type)) {
-        if (!newObject.graphId) {
-          const existingGraph = existingObjects.find(o => o.type === 'graph')
-          if (existingGraph) {
-            newObject.graphId = existingGraph.id
-          }
-        }
-      }
-      
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.map(s => 
-          s.id === activeSceneId 
-            ? { ...s, objects: [...s.objects, newObject] }
-            : s
-        )
-      }))
-      setSelectedObjectIds([newObject.id])
-    })
-  }, [activeScene, activeSceneId])
-
-  const updateObject = useCallback((objectId, updates) => {
-    // Coalesce rapid drag updates into one undo step per object
-    commit(`obj:update:${objectId}`, () => {
-      setProject(prev => {
-        const updatedProject = {
-          ...prev,
-          scenes: prev.scenes.map(s => 
-            s.id === activeSceneId
-              ? {
-                  ...s,
-                  objects: s.objects.map(o =>
-                    o.id === objectId ? { ...o, ...updates } : o
-                  )
-                }
-              : s
-          )
-        }
-        
-        // Auto-expand scene duration if objects extend beyond it
-        const activeScene = updatedProject.scenes.find(s => s.id === activeSceneId)
-        if (activeScene) {
-          const maxEndTime = Math.max(
-            0,
-            ...activeScene.objects.map(obj => {
-              const delay = obj.delay || 0
-              const runTime = obj.runTime || 1
-              return delay + runTime
-            })
-          )
-          
-          // Add 1 second buffer and round up to nearest second
-          const requiredDuration = Math.ceil(maxEndTime + 1)
-          
-          if (requiredDuration > activeScene.duration) {
-            return {
-              ...updatedProject,
-              scenes: updatedProject.scenes.map(s =>
-                s.id === activeSceneId
-                  ? { ...s, duration: requiredDuration }
-                  : s
-              )
-            }
-          }
-        }
-        
-        return updatedProject
-      })
-    })
-  }, [activeSceneId])
-
-  const deleteObject = useCallback((objectId) => {
-    commit(`obj:delete:${objectId}`, () => {
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.map(s => 
-          s.id === activeSceneId
-            ? { ...s, objects: s.objects.filter(o => o.id !== objectId) }
-            : s
-        )
-      }))
-      if (selectedObjectIds.includes(objectId)) {
-        setSelectedObjectIds(prev => prev.filter(id => id !== objectId))
-      }
-    })
-  }, [activeSceneId, selectedObjectIds])
-
-  const duplicateObject = useCallback((objectId) => {
-    if (!activeScene) return
-    const original = activeScene.objects.find(o => o.id === objectId)
-    if (!original) return
-
-    commit(`obj:duplicate:${objectId}`, () => {
-      const clone = JSON.parse(JSON.stringify(original))
-      clone.id = crypto.randomUUID()
-      clone.name = clone.name ? `${clone.name} (Copy)` : null
-      // Slight offset so it's visible it's duplicated
-      if (typeof clone.x === 'number') clone.x = parseFloat((clone.x + 0.3).toFixed(2))
-      if (typeof clone.y === 'number') clone.y = parseFloat((clone.y - 0.3).toFixed(2))
-      // Keep line endpoints consistent with the same offset
-      if (typeof clone.x2 === 'number') clone.x2 = parseFloat((clone.x2 + 0.3).toFixed(2))
-      if (typeof clone.y2 === 'number') clone.y2 = parseFloat((clone.y2 - 0.3).toFixed(2))
-
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.map(s =>
-          s.id === activeSceneId ? { ...s, objects: [...s.objects, clone] } : s
-        )
-      }))
-      setSelectedObjectIds([clone.id])
-    })
-  }, [activeScene, activeSceneId, commit])
-
-  // Layer ordering functions
-  const bringForward = useCallback((objectId) => {
-    commit(`obj:z:forward:${objectId}`, () => {
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.map(s => {
-          if (s.id !== activeSceneId) return s
-          const obj = s.objects.find(o => o.id === objectId)
-          if (!obj) return s
-          const maxZ = Math.max(...s.objects.map(o => o.zIndex || 0))
-          if ((obj.zIndex || 0) >= maxZ) return s
-          return {
-            ...s,
-            objects: s.objects.map(o => 
-              o.id === objectId ? { ...o, zIndex: (o.zIndex || 0) + 1 } : o
-            )
-          }
-        })
-      }))
-    })
-  }, [activeSceneId])
-
-  const sendBackward = useCallback((objectId) => {
-    commit(`obj:z:backward:${objectId}`, () => {
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.map(s => {
-          if (s.id !== activeSceneId) return s
-          const obj = s.objects.find(o => o.id === objectId)
-          if (!obj) return s
-          const minZ = Math.min(...s.objects.map(o => o.zIndex || 0))
-          if ((obj.zIndex || 0) <= minZ) return s
-          return {
-            ...s,
-            objects: s.objects.map(o => 
-              o.id === objectId ? { ...o, zIndex: (o.zIndex || 0) - 1 } : o
-            )
-          }
-        })
-      }))
-    })
-  }, [activeSceneId])
-
-  const bringToFront = useCallback((objectId) => {
-    commit(`obj:z:front:${objectId}`, () => {
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.map(s => {
-          if (s.id !== activeSceneId) return s
-          const maxZ = Math.max(...s.objects.map(o => o.zIndex || 0))
-          return {
-            ...s,
-            objects: s.objects.map(o => 
-              o.id === objectId ? { ...o, zIndex: maxZ + 1 } : o
-            )
-          }
-        })
-      }))
-    })
-  }, [activeSceneId])
-
-  const sendToBack = useCallback((objectId) => {
-    commit(`obj:z:back:${objectId}`, () => {
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.map(s => {
-          if (s.id !== activeSceneId) return s
-          const minZ = Math.min(...s.objects.map(o => o.zIndex || 0))
-          return {
-            ...s,
-            objects: s.objects.map(o => 
-              o.id === objectId ? { ...o, zIndex: minZ - 1 } : o
-            )
-          }
-        })
-      }))
-    })
-  }, [activeSceneId])
-
-  // Timeline / keyframe management
-  const addKeyframe = useCallback((objectId, time, property, value) => {
-    commit(`kf:add:${objectId}`, () => {
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.map(s => 
-          s.id === activeSceneId
-            ? {
-                ...s,
-                objects: s.objects.map(o =>
-                  o.id === objectId
-                    ? {
-                        ...o,
-                        keyframes: [
-                          ...o.keyframes.filter(k => !(k.time === time && k.property === property)),
-                          { time, property, value }
-                        ].sort((a, b) => a.time - b.time)
-                      }
-                    : o
-                )
-              }
-            : s
-        )
-      }))
-    })
-  }, [activeSceneId])
-
-  // File operations
+  // File operations wrapped around store methods
   const saveProject = useCallback(async () => {
-    if (window.electronAPI) {
-      const result = await window.electronAPI.saveProject(project)
-      if (result.success) {
-        console.log('Project saved to:', result.path)
-      }
-    }
-  }, [project])
+    await storeSaveProject()
+  }, [storeSaveProject])
 
   const loadProject = useCallback(async () => {
-    if (window.electronAPI) {
-      const result = await window.electronAPI.loadProject()
-      if (result.success) {
-        commit('project:load', () => {
-          const validated = validateProject(result.data)
-          setProject(validated)
-          setActiveSceneId(validated.scenes[0]?.id)
-          setSelectedObjectIds([])
-          setIsCustomCodeSynced(true)
-          customCodeSyncRef.current = true
-        })
-      }
-    }
-  }, [])
+    await storeLoadProject()
+  }, [storeLoadProject])
 
   function extractSceneClassNameFromCode(code) {
     if (!code || typeof code !== 'string') return null
@@ -587,7 +222,7 @@ function App() {
     const result = await window.electronAPI.renderManim({
       pythonCode: codeToRender,
       sceneName,
-      quality: 'low'
+      quality: renderQuality || 'low'
     })
     
     if (result.success) {
@@ -604,186 +239,59 @@ function App() {
     }
     
     setIsRendering(false)
-  }, [activeScene, generatedCode, customCode, isCustomCodeSynced])
+  }, [activeScene, generatedCode, customCode, isCustomCodeSynced, renderQuality])
 
   const handleCodeChange = useCallback((newCode) => {
-    commit('code:edit', () => {
-      setCustomCode(newCode)
-      setIsCustomCodeSynced(false)
-      customCodeSyncRef.current = false
-    })
+    const store = useProjectStore.getState()
+    store.setCustomCode(newCode)
+    store.setIsCustomCodeSynced(false)
   }, [])
 
-  const clearAllObjects = useCallback(() => {
-    if (!activeScene) return
-    commit('scene:clearAll', () => {
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.map(s =>
-          s.id === activeSceneId ? { ...s, objects: [] } : s
-        )
-      }))
-      setSelectedObjectIds([])
-    })
-  }, [activeScene, activeSceneId, commit])
-
-  const loadDemo = useCallback(() => {
-    commit('scene:loadDemo', () => {
-      const demoScene = createDemoScene()
-      setProject(prev => ({
-        ...prev,
-        scenes: prev.scenes.map(s =>
-          s.id === activeSceneId ? demoScene : s
-        )
-      }))
-      setActiveSceneId(demoScene.id)
-      setSelectedObjectIds([])
-    })
-  }, [activeSceneId, commit])
-
-  const deleteSelectedObjects = useCallback(() => {
-    if (selectedObjectIds.length === 0) return
-    selectedObjectIds.forEach(id => deleteObject(id))
-  }, [deleteObject, selectedObjectIds])
-
-  const applyOpsFromAgent = useCallback((ops) => {
-    commit('ai:apply', () => {
-      let { project: nextProject, warnings } = applyAgentOps(project, ops, { defaultSceneId: activeSceneId })
-      
-      // Auto-expand scene duration if AI-generated objects extend beyond it
-      const activeScene = nextProject.scenes.find(s => s.id === activeSceneId)
-      if (activeScene) {
-        const maxEndTime = Math.max(
-          0,
-          ...activeScene.objects.map(obj => {
-            const delay = obj.delay || 0
-            const runTime = obj.runTime || 1
-            return delay + runTime
-          })
-        )
-        
-        // Add 1 second buffer and round up to nearest second
-        const requiredDuration = Math.ceil(maxEndTime + 1)
-        
-        if (requiredDuration > activeScene.duration) {
-          nextProject = {
-            ...nextProject,
-            scenes: nextProject.scenes.map(s =>
-              s.id === activeSceneId
-                ? { ...s, duration: requiredDuration }
-                : s
-            )
-          }
-        }
-      }
-      
-      setProject(nextProject)
-      if (!nextProject.scenes.find(s => s.id === activeSceneId)) {
-        setActiveSceneId(nextProject.scenes[0]?.id)
-      }
-      // Reduce selection to existing ids (agent may delete objects)
-      const nextActive = nextProject.scenes.find(s => s.id === (activeSceneId || nextProject.scenes[0]?.id)) || nextProject.scenes[0]
-      const idSet = new Set((nextActive?.objects || []).map(o => o.id))
-      setSelectedObjectIds(prev => prev.filter(id => idSet.has(id)))
-
-      if (warnings?.length) {
-        setRenderLogs(prev => prev + `\nAI warnings:\n${warnings.map(w => `- ${w}`).join('\n')}\n`)
-      }
-    })
-  }, [activeSceneId, commit, project])
-
-  const applyPythonCodeFromAgent = useCallback((pythonCode, sceneName) => {
-    // For Python mode: set the code panel directly with the AI-generated code
-    setCustomCode(pythonCode)
-    setIsCustomCodeSynced(false)
-    customCodeSyncRef.current = false // prevent useEffect from overwriting
-    setRenderLogs(prev => prev + `\n[AI] Applied Python code (scene: ${sceneName || 'unknown'})\n`)
-  }, [])
-
-  /**
-   * Merge new Python code into existing custom code.
-   * Extracts the construct() body from the new code and appends it to the existing construct() body.
-   */
-  const mergePythonCode = useCallback((existingCode, newCode) => {
-    if (!existingCode?.trim()) return newCode
-    if (!newCode?.trim()) return existingCode
-
-    // Extract construct body from new code (everything inside def construct(self):)
-    const constructMatch = newCode.match(/def\s+construct\s*\(\s*self\s*\)\s*:([\s\S]*?)(?=\nclass\s|\Z|$)/m)
-    if (!constructMatch) return existingCode + '\n\n# --- Merged library code ---\n' + newCode
-
-    const newBody = constructMatch[1]
-    // Find the last line of the existing construct body (before any trailing class or end-of-file)
-    const existingConstructEnd = existingCode.lastIndexOf('\n\nclass ')
-    if (existingConstructEnd > 0) {
-      return existingCode.slice(0, existingConstructEnd) + '\n\n        # --- From library ---' + newBody + existingCode.slice(existingConstructEnd)
+  const handleSyncToCanvas = useCallback((pythonCode) => {
+    if (!pythonCode?.trim()) return
+    const ops = parsePythonToOps(pythonCode)
+    if (ops.length === 0) {
+      setRenderLogs(prev => prev + '\n[Sync] No objects found in Python code.\n')
+      return
     }
+    const sceneOps = ops.map(op => ({
+      ...op,
+      sceneId: activeSceneId,
+    }))
+    const warnings = applyOpsFromAgent(sceneOps)
+    setRenderLogs(prev => prev + `\n[Sync] Parsed ${ops.length} objects from Python code.\n`)
+    if (warnings?.length) {
+      setRenderLogs(prev => prev + `Sync warnings:\n${warnings.map(w => `- ${w}`).join('\n')}\n`)
+    }
+  }, [activeSceneId, applyOpsFromAgent])
 
-    // Just append to the end of existing code
-    return existingCode + '\n\n        # --- From library ---' + newBody
-  }, [])
-
-  /**
-   * Handle dropping a library entry onto the timeline.
-   * Applies ops with a time offset and merges Python code.
-   */
   const handleDropLibraryEntry = useCallback((entry, dropTime) => {
     if (!entry) return
-    
-    commit('library:drop', () => {
-      // 1) Apply ops with time offset
-      if (entry.ops?.length) {
-        // Offset all ops delays by the drop time
-        const offsetOps = entry.ops.map(op => {
-          if (op.type === 'addObject' && op.object) {
-            return {
-              ...op,
-              sceneId: op.sceneId || activeSceneId,
-              object: {
-                ...op.object,
-                id: crypto.randomUUID(), // fresh ID to avoid collisions
-                delay: (op.object.delay || 0) + dropTime,
-              }
+    if (entry.ops?.length) {
+      const offsetOps = entry.ops.map(op => {
+        if (op.type === 'addObject' && op.object) {
+          return {
+            ...op,
+            sceneId: op.sceneId || activeSceneId,
+            object: {
+              ...op.object,
+              id: crypto.randomUUID(),
+              delay: (op.object.delay || 0) + dropTime,
             }
           }
-          return { ...op, sceneId: op.sceneId || activeSceneId }
-        })
-        
-        const { project: nextProject, warnings } = applyAgentOps(project, offsetOps, { defaultSceneId: activeSceneId })
-        
-        // Auto-expand scene duration
-        const activeScene = nextProject.scenes.find(s => s.id === activeSceneId)
-        if (activeScene) {
-          const maxEndTime = Math.max(
-            0,
-            ...activeScene.objects.map(obj => (obj.delay || 0) + (obj.runTime || 1))
-          )
-          const requiredDuration = Math.ceil(maxEndTime + 1)
-          if (requiredDuration > activeScene.duration) {
-            nextProject.scenes = nextProject.scenes.map(s =>
-              s.id === activeSceneId ? { ...s, duration: requiredDuration } : s
-            )
-          }
         }
-        
-        setProject(nextProject)
-        
-        if (warnings?.length) {
-          setRenderLogs(prev => prev + `\nLibrary drop warnings:\n${warnings.map(w => `- ${w}`).join('\n')}\n`)
-        }
+        return { ...op, sceneId: op.sceneId || activeSceneId }
+      })
+      const warnings = applyOpsFromAgent(offsetOps)
+      if (warnings?.length) {
+        setRenderLogs(prev => prev + `\nLibrary drop warnings:\n${warnings.map(w => `- ${w}`).join('\n')}\n`)
       }
-
-      // 2) Merge Python code with existing code
-      if (entry.pythonCode) {
-        const existingCode = customCode || generatedCode || ''
-        const merged = mergePythonCode(existingCode, entry.pythonCode)
-        setCustomCode(merged)
-        setIsCustomCodeSynced(false)
-        customCodeSyncRef.current = false
-        setRenderLogs(prev => prev + `\n[Library] Merged "${entry.prompt}" at ${dropTime}s\n`)
-      }
-    })
-  }, [activeSceneId, commit, customCode, generatedCode, mergePythonCode, project])
+    }
+    if (entry.pythonCode) {
+      applyPythonCodeFromAgent(entry.pythonCode)
+      setRenderLogs(prev => prev + `\n[Library] Applied "${entry.prompt}" at ${dropTime}s\n`)
+    }
+  }, [activeSceneId, applyOpsFromAgent, applyPythonCodeFromAgent])
 
   // Cmd+Z / Cmd+Shift+Z undo/redo + Delete/Backspace deletion (unless typing)
   useEffect(() => {
@@ -829,6 +337,8 @@ function App() {
         isRendering={isRendering}
         onLoadDemo={loadDemo}
         onOpenAI={() => setShowAIModal(true)}
+        renderQuality={renderQuality}
+        onRenderQualityChange={setRenderQuality}
       />
       
       <div className="main-content">
@@ -908,6 +418,14 @@ function App() {
             />
           </div>
 
+          <InlineAIChat
+            project={project}
+            activeSceneId={activeSceneId}
+            onApplyOps={applyOpsFromAgent}
+            onApplyPythonCode={applyPythonCodeFromAgent}
+            onOpenFullModal={() => setShowAIModal(true)}
+          />
+
           <div
             className="panel-resizer horizontal"
             onMouseDown={(e) => startResize('timeline', e)}
@@ -961,6 +479,7 @@ function App() {
               code={customCode || generatedCode}
               logs={renderLogs}
               onCodeChange={handleCodeChange}
+              onSyncToCanvas={handleSyncToCanvas}
               validationIssues={activeScene ? validateScene(activeScene) : []}
             />
           </div>
@@ -985,187 +504,6 @@ function App() {
       />
     </div>
   )
-}
-
-// Helper to create new objects
-function createObject(type, existingObjects = []) {
-  const baseObject = {
-    id: crypto.randomUUID(),
-    type,
-    name: generateObjectName({ type }, existingObjects),
-    x: 0,
-    y: 0,
-    rotation: 0,
-    opacity: 1,
-    zIndex: 0,
-    keyframes: [],
-    runTime: 1,
-    delay: 0,
-    animationType: 'auto',
-    exitAnimationType: 'FadeOut'
-  }
-  
-  switch (type) {
-    case 'rectangle':
-      return { ...baseObject, width: 2, height: 1, fill: '#e94560', stroke: '#ffffff', strokeWidth: 2 }
-    case 'triangle':
-      return { 
-        ...baseObject, 
-        vertices: [
-          { x: 0, y: 1 },
-          { x: -0.866, y: -0.5 },
-          { x: 0.866, y: -0.5 }
-        ],
-        fill: '#f59e0b', 
-        stroke: '#ffffff', 
-        strokeWidth: 2 
-      }
-    case 'circle':
-      return { ...baseObject, radius: 1, fill: '#4ade80', stroke: '#ffffff', strokeWidth: 2 }
-    case 'line':
-      return { ...baseObject, x2: 2, y2: 0, stroke: '#ffffff', strokeWidth: 3 }
-    case 'arc':
-      return {
-        ...baseObject,
-        // Start point (x,y) and end point (x2,y2), plus control point (cx,cy)
-        x: -1,
-        y: 0,
-        x2: 1,
-        y2: 0,
-        cx: 0,
-        cy: 1,
-        stroke: '#ffffff',
-        strokeWidth: 3,
-        fill: undefined,
-        rotation: 0
-      }
-    case 'arrow':
-      return { ...baseObject, x2: 2, y2: 0, stroke: '#fbbf24', strokeWidth: 3 }
-    case 'dot':
-      return { ...baseObject, radius: 0.1, fill: '#ffffff' }
-    case 'text':
-      return { ...baseObject, text: 'Text', fontSize: 48, fill: '#ffffff', width: 2, height: 0.8 }
-    case 'latex':
-      return { ...baseObject, latex: '\\frac{a}{b}', fill: '#ffffff' }
-    case 'axes':
-      return {
-        ...baseObject,
-        x: 0,
-        y: 0,
-        xRange: { min: -5, max: 5, step: 1 },
-        yRange: { min: -3, max: 3, step: 1 },
-        xLength: 8,
-        yLength: 4,
-        stroke: '#ffffff',
-        strokeWidth: 2,
-        showTicks: true,
-        xLabel: 'x',
-        yLabel: 'y',
-        rotation: 0,
-        fill: undefined,
-      }
-    case 'graph':
-      return {
-        ...baseObject,
-        x: 0,
-        y: 0,
-        formula: 'x^2',
-        xRange: { min: -5, max: 5 },
-        yRange: { min: -3, max: 3 },
-        stroke: '#4ade80',
-        strokeWidth: 3,
-        axesId: null, // Can be linked to an axes object
-        rotation: 0,
-        fill: undefined,
-      }
-    case 'polygon': {
-      const sides = 5
-      const radius = 1
-      const vertices = []
-      for (let i = 0; i < sides; i++) {
-        const angle = (i / sides) * Math.PI * 2 - Math.PI / 2
-        vertices.push({
-          x: parseFloat((Math.cos(angle) * radius).toFixed(2)),
-          y: parseFloat((Math.sin(angle) * radius).toFixed(2))
-        })
-      }
-      return { 
-        ...baseObject, 
-        sides, 
-        radius, 
-        vertices,
-        fill: '#8b5cf6', 
-        stroke: '#ffffff', 
-        strokeWidth: 2 
-      }
-    }
-    case 'graphCursor':
-      return {
-        ...baseObject,
-        x: 0,
-        y: 0,
-        x0: 0, // x position on the graph
-        graphId: null, // Link to a graph object
-        axesId: null, // Optional link to axes for coordinate conversion
-        showCrosshair: true,
-        showDot: true,
-        showLabel: false,
-        labelFormat: '({x0}, {y0})',
-        fill: '#e94560',
-        radius: 0.08,
-      }
-    case 'tangentLine':
-      return {
-        ...baseObject,
-        x: 0,
-        y: 0,
-        graphId: null, // Link to a graph object (if no cursorId)
-        cursorId: null, // Link to a graphCursor object (preferred)
-        axesId: null, // Optional link to axes
-        derivativeStep: 0.001, // h for numerical derivative
-        visibleSpan: 2, // How far the tangent line extends from the point
-        showSlopeLabel: true,
-        slopeLabelOffset: 0.5,
-        stroke: '#fbbf24',
-        strokeWidth: 2,
-      }
-    case 'limitProbe':
-      return {
-        ...baseObject,
-        x: 0,
-        y: 0,
-        x0: 0, // Point to approach
-        graphId: null, // Link to a graph object
-        cursorId: null, // Optional link to a graphCursor to follow
-        axesId: null, // Optional link to axes
-        direction: 'both', // 'left', 'right', or 'both'
-        deltaSchedule: [1, 0.5, 0.1, 0.01], // Sequence of deltas for approaching
-        showReadout: true,
-        showPoints: true,
-        showArrow: true,
-        fill: '#3b82f6',
-        radius: 0.06,
-      }
-    case 'valueLabel':
-      return {
-        ...baseObject,
-        x: 0,
-        y: 0,
-        graphId: null, // Link to a graph for evaluation context
-        cursorId: null, // Link to a graphCursor to display its values
-        valueType: 'slope', // 'slope', 'x', 'y', 'limit', 'custom'
-        customExpression: '',
-        labelPrefix: '',
-        labelSuffix: '',
-        fontSize: 24,
-        fill: '#ffffff',
-        showBackground: false,
-        backgroundFill: '#000000',
-        backgroundOpacity: 0.7,
-      }
-    default:
-      return baseObject
-  }
 }
 
 export default App

@@ -78,18 +78,21 @@ export default function AIAssistantModal({
   const [result, setResult] = useState(null)
   // result shape: { mode, summary, corrections, videoBase64, renderError, _ops, _pythonCode, _sceneName }
 
+  // Conversation history: track original prompt + all edit prompts
+  const [promptHistory, setPromptHistory] = useState([]) // Array of strings
+
   // Clarifying questions (multiple-choice)
   const [clarifyQuestions, setClarifyQuestions] = useState([])
   const [clarifySelections, setClarifySelections] = useState({}) // { [questionId]: Set(optionId) }
   const [clarifyPromptBase, setClarifyPromptBase] = useState(null)
   const [clarifyPreviousResult, setClarifyPreviousResult] = useState(null)
 
+  // Streaming tokens from generation
+  const [streamingText, setStreamingText] = useState('')
+
   // Edit mode: follow-up prompts
   const [editPrompt, setEditPrompt] = useState('')
   const [isEditing, setIsEditing] = useState(false)
-
-  // Keywords
-  const [selectedKeywords, setSelectedKeywords] = useState([])
 
   // Settings
   const [showSettings, setShowSettings] = useState(false)
@@ -109,27 +112,19 @@ export default function AIAssistantModal({
     {
       id: 'visualize',
       label: 'visualize',
-      tooltip: 'Depict with diagrams, geometry, and graphs combined with text explanations',
+      tooltip: 'Use diagrams, geometry, and graphs with text explanations',
     },
     {
       id: 'intuition',
       label: 'intuitive',
-      tooltip: 'Emphasize conceptual understanding over mathematical rigor; fewer equations, more visual explanations',
+      tooltip: 'Focus on conceptual understanding with fewer equations',
     },
     {
       id: 'prove',
       label: 'prove',
-      tooltip: 'State the theorem + assumptions + step-by-step logical argument with clear conclusion',
+      tooltip: 'Show formal proof with theorem statement and logical steps',
     },
   ]
-
-  const toggleKeyword = (keywordId) => {
-    setSelectedKeywords(prev => 
-      prev.includes(keywordId) 
-        ? prev.filter(k => k !== keywordId)
-        : [...prev, keywordId]
-    )
-  }
 
   // Listen for progress events
   useEffect(() => {
@@ -141,6 +136,16 @@ export default function AIAssistantModal({
     return () => window.electronAPI.removeAgentProgressListener?.()
   }, [canUseElectron])
 
+  // Listen for streaming tokens
+  useEffect(() => {
+    if (!canUseElectron) return
+    const handler = (data) => {
+      if (data?.accumulated) setStreamingText(data.accumulated)
+    }
+    window.electronAPI.onAgentStreamToken?.(handler)
+    return () => window.electronAPI.removeAgentStreamTokenListener?.()
+  }, [canUseElectron])
+
   useEffect(() => {
     if (!isOpen) return
     setStatus('idle')
@@ -148,6 +153,7 @@ export default function AIAssistantModal({
     setResult(null)
     setPhase('')
     setPrompt(prefillPrompt || '')
+    setPromptHistory([])
     setEditPrompt('')
     setIsEditing(false)
     setClarifyQuestions([])
@@ -208,10 +214,24 @@ export default function AIAssistantModal({
     const trimmed = userPrompt.trim()
     if (!trimmed) return
 
+    // Extract keywords from the prompt text itself
+    const extractedKeywords = []
+    const lowerPrompt = trimmed.toLowerCase()
+    if (lowerPrompt.includes('visualize') || lowerPrompt.includes('visual')) {
+      extractedKeywords.push('visualize')
+    }
+    if (lowerPrompt.includes('intuitive') || lowerPrompt.includes('intuition')) {
+      extractedKeywords.push('intuition')
+    }
+    if (lowerPrompt.includes('prove') || lowerPrompt.includes('proof')) {
+      extractedKeywords.push('prove')
+    }
+
     setStatus('running')
     setPhase('classifying')
     setError('')
     setResult(null)
+    setStreamingText('')
     setIsEditing(false)
     setClarifyQuestions([])
     setClarifySelections({})
@@ -223,7 +243,7 @@ export default function AIAssistantModal({
         activeSceneId,
         previousResult,
         clarificationAnswers,
-        keywords: selectedKeywords, // Pass selected keywords
+        keywords: extractedKeywords, // Pass extracted keywords from prompt text
       })
       if (!res?.success) {
         setError(res?.error || 'Pipeline failed')
@@ -250,10 +270,14 @@ export default function AIAssistantModal({
     }
   }, [canUseElectron, project, activeSceneId])
 
-  const handleGenerate = () => runPipeline(prompt)
+  const handleGenerate = () => {
+    setPromptHistory([prompt])
+    runPipeline(prompt)
+  }
 
   const handleEdit = () => {
     if (!editPrompt.trim()) return
+    setPromptHistory(prev => [...prev, editPrompt])
     runPipeline(editPrompt, result)
   }
 
@@ -298,6 +322,7 @@ export default function AIAssistantModal({
     setError('')
     setStatus('idle')
     setPrompt('')
+    setPromptHistory([])
     setEditPrompt('')
     setIsEditing(false)
     setPhase('')
@@ -305,7 +330,6 @@ export default function AIAssistantModal({
     setClarifySelections({})
     setClarifyPromptBase(null)
     setClarifyPreviousResult(null)
-    setSelectedKeywords([]) // Reset keywords on retry
   }
 
   const handleApply = async () => {
@@ -407,21 +431,19 @@ export default function AIAssistantModal({
                   disabled={status === 'running'}
                 />
 
-                {/* Keyword selector */}
-                <div className="ai-keywords">
-                  <div className="ai-keywords-label">Focus keywords (optional):</div>
-                  <div className="ai-keywords-list">
+                {/* Focus keywords reference guide */}
+                <div className="ai-keywords-guide">
+                  <div className="ai-keywords-guide-title">💡 Focus keywords you can include in your prompt:</div>
+                  <div className="ai-keywords-guide-list">
                     {KEYWORD_DEFINITIONS.map(kw => (
-                      <button
-                        key={kw.id}
-                        className={`ai-keyword-btn ${selectedKeywords.includes(kw.id) ? 'selected' : ''}`}
-                        onClick={() => toggleKeyword(kw.id)}
-                        title={kw.tooltip}
-                        disabled={status === 'running'}
-                      >
-                        {kw.label}
-                      </button>
+                      <div key={kw.id} className="ai-keyword-item">
+                        <span className="ai-keyword-name">{kw.label}:</span>
+                        <span className="ai-keyword-desc">{kw.tooltip}</span>
+                      </div>
                     ))}
+                  </div>
+                  <div className="ai-keywords-guide-example">
+                    Example: "Visualize the Pythagorean theorem" or "Prove the chain rule"
                   </div>
                 </div>
 
@@ -441,9 +463,18 @@ export default function AIAssistantModal({
             {isEditing && (
               <div className="ai-section">
                 <div className="ai-section-title">Refine your animation</div>
-                <div className="ai-muted" style={{ marginBottom: 8 }}>
-                  Original: "{prompt}"
-                </div>
+                
+                {/* Show conversation history */}
+                {promptHistory.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    {promptHistory.map((p, idx) => (
+                      <div key={idx} className="ai-muted" style={{ marginBottom: 4, fontSize: 13 }}>
+                        {idx === 0 ? '📝 Original: ' : `✏️ Edit ${idx}: `}"{p}"
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <textarea
                   className="ai-prompt"
                   value={editPrompt}
@@ -475,6 +506,9 @@ export default function AIAssistantModal({
                 <div className="ai-progress-text">
                   {PHASE_LABELS[phase] || 'Working…'}
                 </div>
+                {streamingText && (
+                  <pre className="ai-streaming-preview">{streamingText.length > 600 ? '…' + streamingText.slice(-600) : streamingText}</pre>
+                )}
               </div>
             )}
 

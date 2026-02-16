@@ -84,3 +84,23 @@
   margin: 0 8px;
 }
 
+.toolbar-quality-select {
+  background: var(--bg-secondary, #1e1e2e);
+  color: var(--text, #e5e7eb);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+}
+
+.toolbar-quality-select:hover {
+  border-color: var(--accent, #e94560);
+}
+
+.toolbar-quality-select:focus {
+  border-color: var(--accent, #e94560);
+  box-shadow: 0 0 0 2px rgba(233, 69, 96, 0.2);
+}
+

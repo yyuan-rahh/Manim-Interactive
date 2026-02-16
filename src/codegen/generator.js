@@ -1,5 +1,12 @@
+/** @typedef {import('../types').Project} Project */
+/** @typedef {import('../types').Scene} Scene */
+/** @typedef {import('../types').SceneObject} SceneObject */
+
 /**
- * Generate Manim Python code from project JSON
+ * Generate Manim Python code from project JSON.
+ * @param {Project} project
+ * @param {string} activeSceneId
+ * @returns {string} Python source code
  */
 export function generateManimCode(project, activeSceneId) {
   const lines = []

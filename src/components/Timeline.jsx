@@ -15,6 +15,51 @@ function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKe
   
   const duration = scene?.duration || 5
   const selectedObject = selectedObjectIds?.length === 1 ? scene?.objects.find(o => o.id === selectedObjectIds[0]) : null
+  const animFrameRef = useRef(null)
+  const lastFrameTimeRef = useRef(null)
+  const currentTimeRef = useRef(currentTime)
+  currentTimeRef.current = currentTime
+
+  useEffect(() => {
+    if (!isPlaying) {
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current)
+        animFrameRef.current = null
+      }
+      lastFrameTimeRef.current = null
+      return
+    }
+
+    const tick = (timestamp) => {
+      if (lastFrameTimeRef.current === null) {
+        lastFrameTimeRef.current = timestamp
+        animFrameRef.current = requestAnimationFrame(tick)
+        return
+      }
+
+      const deltaMs = timestamp - lastFrameTimeRef.current
+      lastFrameTimeRef.current = timestamp
+      const deltaSec = deltaMs / 1000
+
+      const next = currentTimeRef.current + deltaSec
+      if (next >= duration) {
+        onTimeChange?.(duration)
+        setIsPlaying(false)
+        return
+      }
+      onTimeChange?.(Math.round(next * 10) / 10)
+      animFrameRef.current = requestAnimationFrame(tick)
+    }
+
+    animFrameRef.current = requestAnimationFrame(tick)
+
+    return () => {
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current)
+        animFrameRef.current = null
+      }
+    }
+  }, [isPlaying, duration, onTimeChange])
 
   const objectsById = useMemo(() => {
     const map = new Map()
@@ -438,9 +483,28 @@ function Timeline({ scene, selectedObjectIds, currentTime, onTimeChange, onAddKe
       <div className="timeline-controls">
         <button 
           className="timeline-btn play-btn"
-          onClick={() => setIsPlaying(!isPlaying)}
+          onClick={() => {
+            if (isPlaying) {
+              setIsPlaying(false)
+            } else {
+              if (currentTime >= duration) {
+                onTimeChange?.(0)
+              }
+              setIsPlaying(true)
+            }
+          }}
         >
           {isPlaying ? '⏸' : '▶'}
+        </button>
+        <button
+          className="timeline-btn stop-btn"
+          onClick={() => {
+            setIsPlaying(false)
+            onTimeChange?.(0)
+          }}
+          title="Stop and reset to start"
+        >
+          ⏹
         </button>
         
         <span className="time-display">

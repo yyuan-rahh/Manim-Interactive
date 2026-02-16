@@ -1,11 +1,20 @@
 /**
- * Linking utilities for composable graph tools
+ * Linking utilities for composable graph tools.
+ */
+
+/** @typedef {import('../types').SceneObject} SceneObject */
+
+/**
+ * @typedef {object} LinkingStatus
+ * @property {boolean}  needsLink       - True if the object is missing required links
+ * @property {string[]} missingLinks    - Property names that need linking
+ * @property {string[]} eligibleTargets - Object types that can satisfy the links
  */
 
 /**
- * Check if an object needs links (is missing required links)
- * @param {Object} obj - Object to check
- * @returns {Object} { needsLink: boolean, missingLinks: Array<string>, eligibleTargets: Array<string> }
+ * Check if an object needs links (is missing required links).
+ * @param {SceneObject} obj
+ * @returns {LinkingStatus}
  */
 export function getLinkingStatus(obj) {
   if (!obj) return { needsLink: false, missingLinks: [], eligibleTargets: [] }

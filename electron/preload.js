@@ -38,6 +38,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('agent-progress')
   },
 
+  // Agent streaming token listener
+  onAgentStreamToken: (callback) => {
+    ipcRenderer.on('agent-stream-token', (event, data) => callback(data))
+  },
+  removeAgentStreamTokenListener: () => {
+    ipcRenderer.removeAllListeners('agent-stream-token')
+  },
+
   // Code library
   libraryAdd: (entry) => ipcRenderer.invoke('library-add', entry),
   librarySearch: (prompt) => ipcRenderer.invoke('library-search', prompt),
@@ -45,5 +53,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   libraryDelete: (id) => ipcRenderer.invoke('library-delete', id),
   libraryAddComponents: (payload) => ipcRenderer.invoke('library-add-components', payload),
   libraryClear: () => ipcRenderer.invoke('library-clear'),
+  libraryExport: () => ipcRenderer.invoke('library-export'),
+  libraryImport: () => ipcRenderer.invoke('library-import'),
 })
 

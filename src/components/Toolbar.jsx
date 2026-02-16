@@ -1,7 +1,14 @@
-import React from 'react'
+import React, { useState } from 'react'
 import './Toolbar.css'
 
-function Toolbar({ onSave, onLoad, onClearAll, canClearAll, onRender, isRendering, onLoadDemo, onOpenAI }) {
+const QUALITY_OPTIONS = [
+  { value: 'draft', label: 'Draft', desc: '240p 10fps', flag: '-ql' },
+  { value: 'low', label: 'Preview', desc: '480p 15fps', flag: '-ql' },
+  { value: 'medium', label: 'Medium', desc: '720p 30fps', flag: '-qm' },
+  { value: 'high', label: 'Final', desc: '1080p 60fps', flag: '-qh' },
+]
+
+function Toolbar({ onSave, onLoad, onClearAll, canClearAll, onRender, isRendering, onLoadDemo, onOpenAI, renderQuality, onRenderQualityChange }) {
   return (
     <div className="toolbar">
       <div className="toolbar-brand">
@@ -59,13 +66,28 @@ function Toolbar({ onSave, onLoad, onClearAll, canClearAll, onRender, isRenderin
           <span className="btn-label">Refresh</span>
         </button>
         
+        <div className="toolbar-divider" />
+
+        <select
+          className="toolbar-quality-select"
+          value={renderQuality || 'low'}
+          onChange={(e) => onRenderQualityChange?.(e.target.value)}
+          title="Render quality"
+        >
+          {QUALITY_OPTIONS.map(opt => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label} ({opt.desc})
+            </option>
+          ))}
+        </select>
+
         <button 
           className="toolbar-btn primary" 
           onClick={onRender}
           disabled={isRendering}
-          title="Preview Animation (Low Quality)"
+          title={`Render Animation (${QUALITY_OPTIONS.find(o => o.value === (renderQuality || 'low'))?.desc || 'Preview'})`}
         >
-          <span className="btn-label">{isRendering ? 'Rendering...' : 'Preview'}</span>
+          <span className="btn-label">{isRendering ? 'Rendering...' : 'Render'}</span>
         </button>
       </div>
     </div>
@@ -73,4 +95,3 @@ function Toolbar({ onSave, onLoad, onClearAll, canClearAll, onRender, isRenderin
 }
 
 export default Toolbar
-

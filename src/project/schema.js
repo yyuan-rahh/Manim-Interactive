@@ -1,8 +1,13 @@
+/** @typedef {import('../types').Project} Project */
+/** @typedef {import('../types').Scene} Scene */
+/** @typedef {import('../types').SceneObject} SceneObject */
+
 // Project schema version
 export const SCHEMA_VERSION = '1.0.0'
 
 /**
- * Create an empty project with one default scene
+ * Create an empty project with one default scene.
+ * @returns {Project}
  */
 export function createEmptyProject() {
   return {
@@ -19,7 +24,9 @@ export function createEmptyProject() {
 }
 
 /**
- * Create an empty scene
+ * Create an empty scene.
+ * @param {string} [name]
+ * @returns {Scene}
  */
 export function createEmptyScene(name = 'New Scene') {
   return {
@@ -32,7 +39,8 @@ export function createEmptyScene(name = 'New Scene') {
 }
 
 /**
- * Create a demo scene showcasing composable graph tools
+ * Create a demo scene showcasing composable graph tools.
+ * @returns {Scene}
  */
 export function createDemoScene() {
   const sceneId = crypto.randomUUID()
@@ -255,7 +263,9 @@ export function createDemoScene() {
 }
 
 /**
- * Validate and migrate project data
+ * Validate and migrate project data.
+ * @param {object} data - Raw project JSON
+ * @returns {Project}
  */
 export function validateProject(data) {
   if (!data || typeof data !== 'object') {

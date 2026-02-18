@@ -28,7 +28,7 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           USER INPUT                                     │
+│                           USER INPUT                                    │
 │  • Prompt text                                                          │
 │  • Optional keywords: [visualize, intuitive, prove]                     │
 └───────────────────────────┬─────────────────────────────────────────────┘
@@ -37,11 +37,11 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                STAGE 0: QUICK LIBRARY CHECK                             │
 │  Function: searchLibrary(prompt) — Jaccard + coverage scoring           │
-│                                                                          │
+│                                                                         │
 │  If best match has coverage >= 0.90 and has pythonCode:                 │
 │  → TIER 1: DIRECT REUSE — skip generation, jump to render               │
 │  → 0 generation tokens, ~10s (may still extract ops if missing)         │
-│                                                                          │
+│                                                                         │
 │  Otherwise: continue to full pipeline                                   │
 └───────────────────────────┬─────────────────────────────────────────────┘
                             │
@@ -61,20 +61,20 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 │  Function: clarifyPrompt({ prompt, mode, enrichedPrompt: null, keywords })│
 │  Purpose: Ask user multiple-choice questions when the prompt is         │
 │           ambiguous or underspecified                                   │
-│                                                                          │
+│                                                                         │
 │  Decision Logic:                                                        │
 │  • Only ask when needed (0–3 questions max)                             │
 │  • Each question is multiple-choice (2–4 options)                       │
 │  • Keywords reduce ambiguity (don’t ask what is already specified)      │
-│                                                                          │
+│                                                                         │
 │  Examples:                                                              │
 │  • "animate parabola" → "Show equation labels? Show vertex? Color?"     │
 │  • "prove theorem" → "Focus on visual proof or algebraic steps?"        │
-│                                                                          │
+│                                                                         │
 │  If needsClarification: true                                            │
 │    → Return to frontend, wait for user answers                          │
-│    → User answers questions → Continue pipeline                          │
-│                                                                          │
+│    → User answers questions → Continue pipeline                         │
+│                                                                         │
 │  Output: needsClarification: true/false, questions: []                  │
 └───────────────────────────┬─────────────────────────────────────────────┘
                             │
@@ -84,19 +84,19 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 │  Function: enrichAbstractPrompt(promptPlusClarifications, keywords)     │
 │  Purpose: Expand abstract/conceptual prompts into a detailed animation  │
 │           plan (best-effort). Concrete prompts return null.             │
-│                                                                          │
+│                                                                         │
 │  Decision Logic:                                                        │
 │  • ABSTRACT (e.g., "Euclid's proof", "Fourier transform")               │
 │    → Expand into: concept + visual elements + animation sequence +      │
 │      mathematical details                                               │
 │  • CONCRETE (e.g., "blue circle", "graph y=x^2")                        │
 │    → enrichedPrompt = null                                              │
-│                                                                          │
+│                                                                         │
 │  Keyword Influence:                                                     │
 │  • visualize: Focus on diagrams, geometry, spatial relationships        │
 │  • intuition: Emphasize conceptual understanding, avoid formal rigor    │
 │  • prove: State theorem + assumptions + logical steps                   │
-│                                                                          │
+│                                                                         │
 │  Output: enrichedPrompt (string) or null                                │
 └───────────────────────────┬─────────────────────────────────────────────┘
                             │
@@ -105,18 +105,18 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 │                    STAGE 3: CLASSIFICATION                              │
 │  Function: classifyPrompt(prompt)                                       │
 │  Purpose: Determine output mode (ops or Python)                         │
-│                                                                          │
+│                                                                         │
 │  Step 1: Library Search                                                 │
 │  • Search local library with original prompt                            │
 │  • Score matches: keyword overlap (Jaccard + coverage) + formula bonus  │
 │  • Bonus: has ops +0.3, isComponent +0.5                                │
-│                                                                          │
+│                                                                         │
 │  Step 2: Mode Decision                                                  │
 │  • If strong library match (coverage ≥ 0.4): add a hint to bias mode    │
 │  • Simple request (add/create single object) → ops mode                 │
 │  • Complex request (multiple steps, transforms, proofs) → python mode   │
 │  • Custom Manim code, advanced animations → python mode                 │
-│                                                                          │
+│                                                                         │
 │  Output:                                                                │
 │  • mode: "ops" or "python"                                              │
 │  • searchTerms: [] (empty for ops, populated for python)                │
@@ -135,9 +135,9 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 │    ops array             │  │  • Compute coverage per entry            │
 │  • Return: top matches   │  │                                          │
 │                          │  │  Library Assembly (Stage 4.5):           │
-│                          │  │  • coverage >= 0.5 (single) → Tier 2    │
-│                          │  │  • combined >= 0.5 (multi)  → Tier 3    │
-│                          │  │  • otherwise                → Tier 4    │
+│                          │  │  • coverage >= 0.5 (single) → Tier 2     │
+│                          │  │  • combined >= 0.5 (multi)  → Tier 3     │
+│                          │  │  • otherwise                → Tier 4     │
 │                          │  │                                          │
 │                          │  │  Online Examples (Tier 4 only)           │
 │                          │  │  • GitHub code search (ManimCommunity/manim,│
@@ -185,7 +185,7 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
              │                               ▼
              │               ┌──────────────────────────────────────────┐
              │               │  (Integrated with Stage 5b)              │
-│  RENDER PYTHON PREVIEW                   │
+│  RENDER PYTHON PREVIEW     │                                          │
              │               │                                          │
              │               │  • Extract scene class name              │
              │               │  • Write to temp .py file                │
@@ -196,7 +196,7 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
              │                              ▼
              │               ┌──────────────────────────────────────────┐
              │               │  (Integrated with Stage 5b)              │
-│  EXTRACT OPS FROM PYTHON                 │
+│  EXTRACT OPS FROM PYTHON   │                                          │
              │               │                                          │
              │               │  Function: extractOpsFromPython()        │
              │               │  Purpose: Convert Python → canvas ops    │
@@ -222,33 +222,33 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 │                       STAGE 6: REVIEW                                   │
 │  Function: reviewOutput({ code, mode, prompt })                         │
 │  Purpose: Quality control and correctness verification                  │
-│                                                                          │
+│                                                                         │
 │  Review Criteria:                                                       │
 │  1. PROMPT ADHERENCE                                                    │
 │     • Does output match ALL user requirements?                          │
 │     • Are colors, positions, shapes correct?                            │
 │     • Are mathematical details accurate?                                │
-│                                                                          │
+│                                                                         │
 │  2. CODE QUALITY (Python mode)                                          │
 │     • Valid Manim CE syntax?                                            │
 │     • Proper imports (from manim import *)?                             │
 │     • Scene class defined?                                              │
 │     • Animation calls present?                                          │
-│                                                                          │
+│                                                                         │
 │  3. MANIM COLOR RULES                                                   │
 │     • Check fill_color=BLUE + fill_opacity=1.0                          │
 │     • Verify color constants vs hex codes                               │
 │     • Ensure opacity values set correctly                               │
-│                                                                          │
+│                                                                         │
 │  4. MATHEMATICAL ACCURACY                                               │
 │     • Formulas correct?                                                 │
 │     • Geometric relationships valid?                                    │
 │     • Proof steps logical?                                              │
-│                                                                          │
+│                                                                         │
 │  Decision:                                                              │
 │  • approved: true → Continue to user                                    │
 │  • approved: false → Still continue, but return corrected output + notes │
-│                                                                          │
+│                                                                         │
 │  Output:                                                                │
 │  • approved: boolean                                                    │
 │  • corrections: string (what was fixed / why)                           │
@@ -259,22 +259,22 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
                             ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                    STAGE 7: RETURN TO USER                              │
-│                                                                          │
+│                                                                         │
 │  Package and send to frontend:                                          │
 │  • videoPreview: base64 MP4 (always)                                    │
 │  • _ops: operations array (for canvas rendering)                        │
 │  • _pythonCode: exact code used (for code panel)                        │
 │  • summary: description of animation                                    │
 │  • mode: "ops" or "python"                                              │
-│                                                                          │
+│                                                                         │
 │  User Options:                                                          │
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐                                │
-│  │  APPLY  │  │  EDIT   │  │  RETRY  │                                │
-│  └────┬────┘  └────┬────┘  └────┬────┘                                │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐                                  │
+│  │  APPLY  │  │  EDIT   │  │  RETRY  │                                  │
+│  └────┬────┘  └────┬────┘  └────┬────┘                                  │
 │       │            │            │                                       │
 │       ▼            ▼            ▼                                       │
-│   Save to      Add more    Generate                                    │
-│   Library      prompts     new version                                 │
+│   Save to      Add more    Generate                                     │
+│   Library      prompts     new version                                  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 

@@ -38,7 +38,7 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
 │                STAGE 0: QUICK LIBRARY CHECK                             │
 │  Function: searchLibrary(prompt) — Jaccard + coverage scoring           │
 │                                                                          │
-│  If best match has coverage >= 0.85 and has pythonCode:                 │
+│  If best match has coverage >= 0.90 and has pythonCode:                 │
 │  → TIER 1: DIRECT REUSE — skip generation, jump to render               │
 │  → 0 generation tokens, ~10s (may still extract ops if missing)         │
 │                                                                          │
@@ -47,7 +47,7 @@ The ManimInteractive AI Agent uses a **tiered library-first pipeline** to transf
                             │
               ┌─────────────┴──────────────┐
               │                            │
-        coverage >= 0.85            coverage < 0.85
+        coverage >= 0.90            coverage < 0.90
               │                            │
               ▼                            ▼
      ┌────────────────┐     ┌─────────────────────────────────┐
